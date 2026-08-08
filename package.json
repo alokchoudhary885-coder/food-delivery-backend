@@ -1,0 +1,49 @@
+{
+  "name": "food-delivery-backend",
+  "version": "1.0.0",
+  "description": "Production-ready Food Delivery REST API built with Node.js, Express, MongoDB Atlas, and Mongoose",
+  "main": "server.js",
+  "author": "Your Name",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "lint": "eslint . --ext .js",
+    "lint:fix": "eslint . --ext .js --fix",
+    "format": "prettier --write \"**/*.js\""
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.3.1",
+    "helmet": "^7.1.0",
+    "http-status-codes": "^2.3.0",
+    "joi": "^17.13.1",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.5.1",
+    "mongoose-paginate-v2": "^1.8.3",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.0",
+    "razorpay": "^2.9.8"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "nodemon": "^3.1.4",
+    "prettier": "^3.3.3"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "src",
+      "server.js"
+    ],
+    "ext": "js,json",
+    "ignore": [
+      "node_modules/"
+    ]
+  }
+}
