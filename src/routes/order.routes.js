@@ -21,10 +21,10 @@ router.use(protect);
 
 router
   .route('/')
-  .post(restrictTo('customer'), validate(createOrderSchema), orderController.placeOrder);
+  .post(validate(createOrderSchema), orderController.placeOrder);
 
 // Static paths before dynamic /:id
-router.get('/my-orders', restrictTo('customer'), orderController.getMyOrders);
+router.get('/my-orders', orderController.getMyOrders);
 router.get('/restaurant/:restaurantId', restrictTo('owner', 'admin'), orderController.getRestaurantOrders);
 
 router.get('/:id', orderController.getOrderById);
