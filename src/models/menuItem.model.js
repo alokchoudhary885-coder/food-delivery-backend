@@ -31,19 +31,19 @@ const menuItemSchema = new mongoose.Schema(
 
     category: {
       type: String,
-      required: [true, 'Category is required'],
       enum: {
         values: [
-          'Starter', 'Main Course', 'Dessert', 'Beverage',
-          'Bread', 'Rice', 'Salad', 'Combo', 'Other',
+          'Starter', 'Main Course', 'Dessert', 'Beverage', 'Beverages',
+          'Bread', 'Rice', 'Salad', 'Combo', 'Sides', 'Other',
         ],
         message: '{VALUE} is not a valid category',
       },
+      default: 'Main Course',
     },
 
     image: {
       type: String,
-      default: 'https://placehold.co/400x300?text=Food+Item',
+      default: null,
     },
 
     restaurant: {

@@ -7,6 +7,7 @@ const { StatusCodes } = require('http-status-codes');
 const paymentService  = require('../services/payment.service');
 const catchAsync      = require('../utils/catchAsync');
 const { sendSuccess } = require('../utils/response');
+const { sendPaymentSuccessEmail } = require('../services/email.service');
 
 /**
  * POST /api/v1/payments/create-order
@@ -74,14 +75,23 @@ const verifyPayment = catchAsync(async (req, res) => {
 
   sendSuccess(res, StatusCodes.OK, '✅ Payment verified successfully. Order confirmed!', {
     order: {
-      _id:             order._id,
-      status:          order.status,
-      paymentStatus:   order.paymentStatus,
+      _id:               order._id,
+      status:            order.status,
+      paymentStatus:     order.paymentStatus,
       razorpayPaymentId: order.razorpayPaymentId,
-      grandTotal:      order.grandTotal,
-      confirmedAt:     order.confirmedAt,
+      grandTotal:        order.grandTotal,
+      confirmedAt:       order.confirmedAt,
     },
   });
+
+  // Send payment success email (non-blocking)
+  sendPaymentSuccessEmail({
+    customerEmail: req.user.email,
+    customerName:  req.user.name,
+    orderId:       order._id,
+    amount:        order.grandTotal,
+    paymentId:     razorpayPaymentId,
+  }).catch(() => {});
 });
 
 module.exports = {

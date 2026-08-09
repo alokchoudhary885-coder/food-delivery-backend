@@ -7,6 +7,7 @@ const { StatusCodes } = require('http-status-codes');
 const orderService = require('../services/order.service');
 const catchAsync = require('../utils/catchAsync');
 const { sendSuccess, sendPaginatedSuccess } = require('../utils/response');
+const { sendOrderPlacedEmail, sendOrderStatusEmail } = require('../services/email.service');
 
 /**
  * POST /api/v1/orders
@@ -15,6 +16,14 @@ const { sendSuccess, sendPaginatedSuccess } = require('../utils/response');
 const placeOrder = catchAsync(async (req, res) => {
   const order = await orderService.placeOrder(req.user._id, req.body);
   sendSuccess(res, StatusCodes.CREATED, 'Order placed successfully.', { order });
+
+  // Send email notification (non-blocking)
+  sendOrderPlacedEmail({
+    customerEmail: req.user.email,
+    customerName:  req.user.name,
+    order,
+    restaurantName: order.restaurant?.name || 'Restaurant',
+  }).catch(() => {});
 });
 
 /**
@@ -71,6 +80,16 @@ const updateOrderStatus = catchAsync(async (req, res) => {
     req.user
   );
   sendSuccess(res, StatusCodes.OK, `Order status updated to "${status}".`, { order });
+
+  // Send status update email to customer (non-blocking)
+  if (order.customerEmail) {
+    sendOrderStatusEmail({
+      customerEmail: order.customerEmail,
+      customerName:  order.customerName || 'Customer',
+      orderId:       order._id,
+      status,
+    }).catch(() => {});
+  }
 });
 
 module.exports = {

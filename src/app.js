@@ -27,6 +27,7 @@ const restaurantRoutes = require('./routes/restaurant.routes');
 const orderRoutes      = require('./routes/order.routes');
 const menuItemRoutes   = require('./routes/menuItem.routes');
 const paymentRoutes    = require('./routes/payment.routes');
+const uploadRoutes     = require('./routes/upload.routes');
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 const globalErrorHandler = require('./middlewares/error.middleware');
@@ -102,10 +103,11 @@ app.get('/api/v1/health', (_req, res) => {
 
 // Mount feature routers
 app.use('/api/v1/auth',        authRoutes);
-app.use('/api/v1/restaurants', restaurantRoutes);  // includes /:id/menu nested routes
-app.use('/api/v1/menu',        menuItemRoutes);     // standalone: GET/PUT/DELETE /menu/:id
+app.use('/api/v1/restaurants', restaurantRoutes);
+app.use('/api/v1/menu',        menuItemRoutes);
 app.use('/api/v1/orders',      orderRoutes);
-app.use('/api/v1/payments',    paymentRoutes);      // Razorpay: create-order + verify
+app.use('/api/v1/payments',    paymentRoutes);
+app.use('/api/v1/upload',      uploadRoutes);      // Cloudinary image upload
 
 // ── 6. 404 Handler ────────────────────────────────────────────────────────────
 // Catches any request that didn't match a registered route above.

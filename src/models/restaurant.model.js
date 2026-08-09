@@ -29,24 +29,18 @@ const restaurantSchema = new mongoose.Schema(
 
     cuisine: {
       type: [String],
-      required: [true, 'At least one cuisine type is required'],
-      enum: [
-        'Indian', 'Chinese', 'Italian', 'Mexican', 'American',
-        'Japanese', 'Thai', 'Mediterranean', 'FastFood', 'Bakery',
-        'Beverages', 'Desserts', 'Other',
-      ],
+      default: [],
     },
 
     address: {
-      street: { type: String, required: [true, 'Street address is required'], trim: true },
-      city:   { type: String, required: [true, 'City is required'], trim: true },
-      state:  { type: String, required: [true, 'State is required'], trim: true },
-      pincode: { type: String, required: [true, 'Pincode is required'], trim: true },
+      street:  { type: String, trim: true },
+      city:    { type: String, required: [true, 'City is required'], trim: true },
+      state:   { type: String, trim: true },
+      pincode: { type: String, trim: true },
     },
 
     phone: {
       type: String,
-      required: [true, 'Restaurant phone number is required'],
       match: [/^[0-9]{10}$/, 'Please provide a valid 10-digit phone number'],
     },
 

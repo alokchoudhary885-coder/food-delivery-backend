@@ -21,11 +21,21 @@ const createRestaurant = async (data, ownerId) => {
  * @param {object} query - { city, cuisine, page, limit }
  */
 const getAllRestaurants = async (query) => {
-  const { city, cuisine, page = 1, limit = 10 } = query;
+  const { city, cuisine, name, minRating, page = 1, limit = 9 } = query;
 
   const filter = { isActive: true };
-  if (city) { filter['address.city'] = new RegExp(city, 'i'); }
-  if (cuisine) { filter.cuisine = cuisine; }
+
+  // Name search (case-insensitive)
+  if (name)      { filter.name = new RegExp(name, 'i'); }
+
+  // City filter (case-insensitive)
+  if (city)      { filter['address.city'] = new RegExp(city, 'i'); }
+
+  // Cuisine type filter
+  if (cuisine)   { filter.cuisineType = { $in: [new RegExp(cuisine, 'i')] }; }
+
+  // Minimum rating filter
+  if (minRating) { filter.rating = { $gte: Number(minRating) }; }
 
   const skip = (page - 1) * limit;
 
