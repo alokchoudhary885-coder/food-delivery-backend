@@ -54,17 +54,10 @@ app.use(helmet());
 // Cross-Origin Resource Sharing — allows your React frontend to call this API.
 // Must be configured BEFORE routes so OPTIONS preflight requests are handled.
 const corsOptions = {
-  // Allow requests only from the CLIENT_URL defined in .env
-  // In production, this should be your deployed React app's domain.
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
-
-  // Allow these HTTP methods from the frontend
+  // Mirror request origin dynamically so Vercel, mobile, and production work seamlessly
+  origin: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-
-  // Allow these headers in requests from the frontend
   allowedHeaders: ['Content-Type', 'Authorization'],
-
-  // Allow cookies / credentials to be sent cross-origin (needed for refresh tokens later)
   credentials: true,
 };
 
