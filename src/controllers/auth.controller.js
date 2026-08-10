@@ -54,4 +54,16 @@ const updatePassword = catchAsync(async (req, res) => {
   sendSuccess(res, StatusCodes.OK, 'Password updated successfully.', { user, token });
 });
 
-module.exports = { register, login, getMe, updatePassword };
+const sendOTP = catchAsync(async (req, res) => {
+  const { phone } = req.body;
+  const result = await authService.sendOTP(phone);
+  sendSuccess(res, StatusCodes.OK, 'OTP sent successfully', result);
+});
+
+const verifyOTP = catchAsync(async (req, res) => {
+  const { phone, otp } = req.body;
+  const { user, token } = await authService.verifyOTP(phone, otp);
+  sendSuccess(res, StatusCodes.OK, 'OTP verified successfully', { user, token });
+});
+
+module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP };

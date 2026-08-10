@@ -24,8 +24,8 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      required: [true, 'Email is required'],
       unique: true,
+      sparse: true,
       lowercase: true,
       trim: true,
       match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address'],
@@ -33,9 +33,18 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: [true, 'Password is required'],
       minlength: [6, 'Password must be at least 6 characters'],
-      select: false, // Never returned in query results by default
+      select: false,
+    },
+
+    otp: {
+      type: String,
+      select: false,
+    },
+
+    otpExpiresAt: {
+      type: Date,
+      select: false,
     },
 
     role: {

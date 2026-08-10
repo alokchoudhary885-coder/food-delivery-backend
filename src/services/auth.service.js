@@ -100,4 +100,62 @@ const updatePassword = async (userId, currentPassword, newPassword) => {
   return { user, token };
 };
 
-module.exports = { registerUser, loginUser, getMe, updatePassword, signToken };
+/**
+ * Send OTP to mobile number.
+ * @param {string} phone
+ * @returns {{ phone: string, otp: string, message: string }}
+ */
+const sendOTP = async (phone) => {
+  if (!phone || !/^[0-9]{10}$/.test(phone)) {
+    throw new AppError('Valid 10-digit phone number is required.', 400);
+  }
+
+  // Generate 6-digit OTP (e.g. 123456 for fast testing, or random 6-digits)
+  const otp = '123456';
+  const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins expiry
+
+  let user = await User.findOne({ phone });
+  if (!user) {
+    user = await User.create({
+      name: `User_${phone.slice(-4)}`,
+      phone,
+      role: 'customer',
+      otp,
+      otpExpiresAt,
+    });
+  } else {
+    user.otp = otp;
+    user.otpExpiresAt = otpExpiresAt;
+    await user.save({ validateBeforeSave: false });
+  }
+
+  return { phone, otp, message: 'OTP sent successfully' };
+};
+
+/**
+ * Verify OTP and login or create user.
+ * @param {string} phone
+ * @param {string} otp
+ * @returns {{ user: object, token: string }}
+ */
+const verifyOTP = async (phone, otp) => {
+  if (!phone || !otp) {
+    throw new AppError('Phone and OTP are required.', 400);
+  }
+
+  const user = await User.findOne({ phone }).select('+otp +otpExpiresAt');
+
+  if (!user || user.otp !== otp || user.otpExpiresAt < Date.now()) {
+    throw new AppError('Invalid or expired OTP. Please request a new one.', 400);
+  }
+
+  user.otp = undefined;
+  user.otpExpiresAt = undefined;
+  await user.save({ validateBeforeSave: false });
+
+  const token = signToken(user._id);
+
+  return { user, token };
+};
+
+module.exports = { registerUser, loginUser, getMe, updatePassword, signToken, sendOTP, verifyOTP };
