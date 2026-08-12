@@ -13,10 +13,15 @@ const Order   = require('../models/order.model');
 const AppError = require('../utils/AppError');
 
 // ── Razorpay SDK instance ─────────────────────────────────────────────────────
-const razorpay = new Razorpay({
-  key_id:     process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+let razorpay;
+try {
+  razorpay = new Razorpay({
+    key_id:     process.env.RAZORPAY_KEY_ID || 'rzp_test_placeholderKey123',
+    key_secret: process.env.RAZORPAY_KEY_SECRET || 'placeholder_secret',
+  });
+} catch (err) {
+  console.warn('⚠️ Razorpay SDK Initialization Warning:', err.message);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 /**

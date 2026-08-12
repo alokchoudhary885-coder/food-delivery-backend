@@ -206,6 +206,13 @@ const authenticateFirebaseUser = async (payload) => {
   return { user, token };
 };
 
+/**
+ * Legacy Google login handler.
+ */
+const googleLogin = async (payload) => {
+  return authenticateFirebaseUser({ ...payload, authProvider: 'google' });
+};
+
 module.exports = {
   registerUser,
   loginUser,

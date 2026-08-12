@@ -29,7 +29,8 @@ const protect = catchAsync(async (req, _res, next) => {
   let currentUser = null;
 
   // 1. Try Firebase Admin Server-Side Verification (with checkRevoked = true)
-  if (firebaseAdmin.apps.length) {
+  const existingApps = firebaseAdmin.getApps ? firebaseAdmin.getApps() : (firebaseAdmin.apps || []);
+  if (existingApps.length) {
     try {
       const decodedToken = await firebaseAdmin.auth().verifyIdToken(token, true);
       const uid = decodedToken.uid;

@@ -8,8 +8,9 @@ const admin = require('firebase-admin');
 let firebaseApp;
 
 try {
-  if (!admin.apps.length) {
-    const projectId   = process.env.FIREBASE_PROJECT_ID || 'foodrush-app';
+  const existingApps = admin.getApps ? admin.getApps() : (admin.apps || []);
+  if (existingApps.length === 0) {
+    const projectId   = process.env.FIREBASE_PROJECT_ID || 'foodrush-app-e8b58';
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     const privateKey  = process.env.FIREBASE_PRIVATE_KEY
       ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
@@ -31,7 +32,7 @@ try {
       console.log('ℹ️ Firebase Admin SDK initialized with Default Project ID.');
     }
   } else {
-    firebaseApp = admin.app();
+    firebaseApp = existingApps[0];
   }
 } catch (err) {
   console.error('⚠️ Firebase Admin SDK Initialization Warning:', err.message);
