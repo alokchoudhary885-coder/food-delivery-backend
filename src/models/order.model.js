@@ -46,6 +46,10 @@ const orderSchema = new mongoose.Schema(
       ref: 'User',
       required: [true, 'Order must belong to a customer'],
     },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
 
     restaurant: {
       type: mongoose.Schema.Types.ObjectId,

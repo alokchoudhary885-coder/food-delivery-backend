@@ -79,6 +79,7 @@ const placeOrder = async (customerId, data) => {
   // 7. Create the order
   const order = await Order.create({
     customer: customerId,
+    userId: customerId,
     restaurant: restaurantId,
     items: orderItems,
     deliveryAddress,

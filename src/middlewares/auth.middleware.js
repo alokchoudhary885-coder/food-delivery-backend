@@ -11,49 +11,88 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user.model');
 const AppError = require('../utils/AppError');
 const catchAsync = require('../utils/catchAsync');
+const firebaseAdmin = require('../config/firebase-admin');
 
 // ── protect ───────────────────────────────────────────────────────────────
 // Must run on every protected route BEFORE the controller.
-// Reads the token from the Authorization header (Bearer scheme).
+// Verifies Firebase ID Tokens (with checkRevoked) and JWT tokens server-side.
 const protect = catchAsync(async (req, _res, next) => {
-  // 1. Check if Authorization header exists and has Bearer token
   let token;
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
     token = req.headers.authorization.split(' ')[1];
   }
 
   if (!token) {
-    return next(new AppError('You are not logged in. Please log in to access this resource.', 401));
+    return next(new AppError('Authentication required. Please log in to continue.', 401));
   }
 
-  // 2. Verify token signature and expiration
-  let decoded;
-  try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET);
-  } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return next(new AppError('Your session has expired. Please log in again.', 401));
+  let currentUser = null;
+
+  // 1. Try Firebase Admin Server-Side Verification (with checkRevoked = true)
+  if (firebaseAdmin.apps.length) {
+    try {
+      const decodedToken = await firebaseAdmin.auth().verifyIdToken(token, true);
+      const uid = decodedToken.uid;
+      const email = decodedToken.email;
+      const phone = decodedToken.phone_number ? decodedToken.phone_number.replace(/\D/g, '').slice(-10) : null;
+
+      let query = { firebaseUid: uid };
+      if (email) query = { $or: [{ firebaseUid: uid }, { email: email.toLowerCase() }] };
+      else if (phone) query = { $or: [{ firebaseUid: uid }, { phone }] };
+
+      currentUser = await User.findOne(query);
+
+      if (!currentUser) {
+        currentUser = await User.create({
+          firebaseUid: uid,
+          name: decodedToken.name || (email ? email.split('@')[0] : `Customer_${phone?.slice(-4) || 'User'}`),
+          email: email ? email.toLowerCase() : undefined,
+          phone: phone || undefined,
+          avatar: decodedToken.picture || '',
+          emailVerified: !!decodedToken.email_verified,
+          phoneVerified: !!decodedToken.phone_number,
+          auth_provider: decodedToken.firebase?.sign_in_provider === 'google.com' ? 'google' : phone ? 'phone' : 'email',
+          role: 'customer',
+        });
+      } else {
+        if (!currentUser.firebaseUid) currentUser.firebaseUid = uid;
+        if (decodedToken.email_verified) currentUser.emailVerified = true;
+        if (decodedToken.phone_number) currentUser.phoneVerified = true;
+        await currentUser.save({ validateBeforeSave: false });
+      }
+
+      req.firebaseToken = decodedToken;
+    } catch (fbErr) {
+      if (fbErr.code === 'auth/id-token-revoked') {
+        return next(new AppError('Your session has been revoked. Please log in again.', 401));
+      }
+      // If Firebase verification fails, fall through to JWT verification
     }
-    return next(new AppError('Invalid token. Please log in again.', 401));
   }
 
-  // 3. Check if user still exists (token valid but user deleted)
-  const currentUser = await User.findById(decoded.id);
+  // 2. Fallback JWT Signature Verification
+  if (!currentUser) {
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      currentUser = await User.findById(decoded.id);
+    } catch (err) {
+      if (err.name === 'TokenExpiredError') {
+        return next(new AppError('Your session has expired. Please log in again.', 401));
+      }
+      return next(new AppError('Invalid authentication token. Please log in again.', 401));
+    }
+  }
+
   if (!currentUser) {
     return next(new AppError('The user belonging to this token no longer exists.', 401));
   }
 
-  // 4. Check if user is still active
   if (!currentUser.isActive) {
     return next(new AppError('Your account has been deactivated. Please contact support.', 401));
   }
 
-  // 5. Check if password was changed after the token was issued
-  if (currentUser.changedPasswordAfter(decoded.iat)) {
-    return next(new AppError('Password was recently changed. Please log in again.', 401));
-  }
-
-  // Grant access: attach user to request for downstream middleware/controllers
+  // Grant access: attach verified user to request
   req.user = currentUser;
   next();
 });

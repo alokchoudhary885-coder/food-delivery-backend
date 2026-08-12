@@ -85,6 +85,33 @@ const userSchema = new mongoose.Schema(
       default: 'email',
     },
 
+    firebaseUid: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    phoneVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    addresses: [
+      {
+        street: { type: String, trim: true },
+        city: { type: String, trim: true },
+        state: { type: String, trim: true },
+        pincode: { type: String, trim: true },
+        isDefault: { type: Boolean, default: false },
+      },
+    ],
+
     avatar: {
       type: String,
       default: '',
