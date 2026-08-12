@@ -66,4 +66,9 @@ const verifyOTP = catchAsync(async (req, res) => {
   sendSuccess(res, StatusCodes.OK, 'OTP verified successfully', { user, token });
 });
 
-module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP };
+const googleLogin = catchAsync(async (req, res) => {
+  const { user, token } = await authService.googleLogin(req.body);
+  sendSuccess(res, StatusCodes.OK, 'Logged in with Google successfully.', { user, token });
+});
+
+module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP, googleLogin };

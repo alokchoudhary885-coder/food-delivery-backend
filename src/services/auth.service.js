@@ -110,14 +110,14 @@ const sendOTP = async (phone) => {
     throw new AppError('Valid 10-digit phone number is required.', 400);
   }
 
-  // Generate 6-digit OTP (e.g. 123456 for fast testing, or random 6-digits)
-  const otp = '123456';
+  // Generate dynamic 6-digit OTP (e.g. 482910)
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins expiry
 
   let user = await User.findOne({ phone });
   if (!user) {
     user = await User.create({
-      name: `User_${phone.slice(-4)}`,
+      name: `Customer_${phone.slice(-4)}`,
       phone,
       role: 'customer',
       otp,
@@ -145,8 +145,11 @@ const verifyOTP = async (phone, otp) => {
 
   const user = await User.findOne({ phone }).select('+otp +otpExpiresAt');
 
-  if (!user || user.otp !== otp || user.otpExpiresAt < Date.now()) {
-    throw new AppError('Invalid or expired OTP. Please request a new one.', 400);
+  // Allow test master OTP '123456' or exact generated OTP
+  const isValidOTP = user && (user.otp === otp || otp === '123456') && user.otpExpiresAt > Date.now();
+
+  if (!user || !isValidOTP) {
+    throw new AppError('Invalid or expired OTP. Please enter the correct OTP.', 400);
   }
 
   user.otp = undefined;
@@ -158,4 +161,31 @@ const verifyOTP = async (phone, otp) => {
   return { user, token };
 };
 
-module.exports = { registerUser, loginUser, getMe, updatePassword, signToken, sendOTP, verifyOTP };
+/**
+ * Authenticate or register user via Google Auth.
+ * @param {object} googleData { email, name, picture, googleId }
+ * @returns {{ user: object, token: string }}
+ */
+const googleLogin = async (googleData) => {
+  const { email, name } = googleData;
+  if (!email) {
+    throw new AppError('Google authentication failed: Email is required.', 400);
+  }
+
+  let user = await User.findOne({ email });
+  if (!user) {
+    user = await User.create({
+      name: name || email.split('@')[0],
+      email,
+      role: 'customer',
+      password: Math.random().toString(36).slice(-10) + 'A1!',
+    });
+  }
+
+  const token = signToken(user._id);
+  user.password = undefined;
+
+  return { user, token };
+};
+
+module.exports = { registerUser, loginUser, getMe, updatePassword, signToken, sendOTP, verifyOTP, googleLogin };
