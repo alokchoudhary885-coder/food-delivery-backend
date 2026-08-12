@@ -162,24 +162,42 @@ const verifyOTP = async (phone, otp) => {
 };
 
 /**
- * Authenticate or register user via Google Auth.
- * @param {object} googleData { email, name, picture, googleId }
+ * Process authenticated user identity from real production auth provider (Firebase / Google / Phone OTP).
+ * @param {object} payload { email, phone, name, avatar, authProvider, uid }
  * @returns {{ user: object, token: string }}
  */
-const googleLogin = async (googleData) => {
-  const { email, name } = googleData;
-  if (!email) {
-    throw new AppError('Google authentication failed: Email is required.', 400);
+const authenticateFirebaseUser = async (payload) => {
+  const { email, phone, name, avatar, authProvider } = payload;
+
+  let query = {};
+  if (email) {
+    query.email = email.toLowerCase().trim();
+  } else if (phone) {
+    // Strip +91 or country code if needed for 10-digit matching
+    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+    query.phone = cleanPhone;
+  } else {
+    throw new AppError('Valid email or phone number is required from auth provider.', 400);
   }
 
-  let user = await User.findOne({ email });
+  let user = await User.findOne(query);
+
   if (!user) {
+    const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : undefined;
     user = await User.create({
-      name: name || email.split('@')[0],
-      email,
+      name: name || (email ? email.split('@')[0] : `Customer_${cleanPhone?.slice(-4) || 'User'}`),
+      email: email ? email.toLowerCase().trim() : undefined,
+      phone: cleanPhone,
+      avatar: avatar || '',
+      auth_provider: authProvider || (email ? 'google' : 'phone'),
       role: 'customer',
-      password: Math.random().toString(36).slice(-10) + 'A1!',
     });
+  } else {
+    // Update profile info if missing
+    if (avatar && !user.avatar) user.avatar = avatar;
+    if (authProvider && !user.auth_provider) user.auth_provider = authProvider;
+    if (name && user.name.startsWith('Customer_')) user.name = name;
+    await user.save({ validateBeforeSave: false });
   }
 
   const token = signToken(user._id);
@@ -188,4 +206,14 @@ const googleLogin = async (googleData) => {
   return { user, token };
 };
 
-module.exports = { registerUser, loginUser, getMe, updatePassword, signToken, sendOTP, verifyOTP, googleLogin };
+module.exports = {
+  registerUser,
+  loginUser,
+  getMe,
+  updatePassword,
+  signToken,
+  sendOTP,
+  verifyOTP,
+  googleLogin,
+  authenticateFirebaseUser,
+};

@@ -74,6 +74,17 @@ const userSchema = new mongoose.Schema(
       default: true,
     },
 
+    auth_provider: {
+      type: String,
+      enum: ['email', 'google', 'phone'],
+      default: 'email',
+    },
+
+    avatar: {
+      type: String,
+      default: '',
+    },
+
     // Used to invalidate JWTs issued before a password change
     passwordChangedAt: {
       type: Date,
