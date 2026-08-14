@@ -1,11 +1,12 @@
 /**
  * @file src/services/ai.service.js
- * @description Level 3 AI Recommendation & Autonomous Ordering Engine.
- * Features:
- * - Natural Language Direct Cart Actions ("2 paneer rolls aur 1 cold drink add karo")
- * - Multi-turn Conversation Memory & Context ("second wala add karo", "isme se sasta dikhao")
- * - Smart Budget & Portion Optimization
- * - Direct Checkout Action Triggers
+ * @description FoodRush Comprehensive Conversational Food AI & Autonomous Ordering Engine.
+ * Supports:
+ * 1. Social & Conversational Chitchat (Thanks, Greetings, Help, Capabilities)
+ * 2. Mood & Scenario-Based Food Recommendations (Party, Sad/Comfort, Romantic, Rainy/Monsoon, Late Night)
+ * 3. Live Restaurant Directory & Ratings Inquiries
+ * 4. Order Tracking, Delivery & Payment FAQs
+ * 5. Multi-Turn Conversation Memory & Autonomous Direct Cart Actions
  */
 
 const MenuItem = require('../models/menuItem.model');
@@ -13,7 +14,7 @@ const Restaurant = require('../models/restaurant.model');
 const AppError = require('../utils/AppError');
 
 /**
- * Extract intent, quantities, item names, and constraints from natural language query.
+ * Analyze intent, sentiment, context, and entities from user query.
  */
 const analyzeIntentAndEntities = (query = '', history = []) => {
   const text = query.toLowerCase().trim();
@@ -29,13 +30,33 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
     }
   }
 
-  // 1. Checkout Intent
+  // 1. Social: Gratitude (thank you, thanks, shukriya, dhanyawad)
+  if (/^(thank\s*you|thanks|thx|shukriya|dhanyawad|great|awesome|badhiya|shukriyaa|thanku|thankyou)/i.test(text)) {
+    return { intent: 'GRATITUDE', rawText: text };
+  }
+
+  // 2. Social: Greetings & Identity (hi, hello, namaste, kaun ho tum, help, kya kar sakte ho)
+  if (/^(hi|hello|hey|namaste|hlo|helo|kaun ho|who are you|tum kaun ho|aap kaun ho|kya kar sakte ho|help|features|guide)/i.test(text)) {
+    return { intent: 'GREETING_OR_IDENTITY', rawText: text };
+  }
+
+  // 3. Order & Support FAQ (mera order kahan hai, delivery time, payment options, cod)
+  if (/mera order|order track|order kahan|track order|delivery time|kab tak aayega|payment options|cod|online payment/i.test(text)) {
+    return { intent: 'ORDER_SUPPORT_FAQ', rawText: text };
+  }
+
+  // 4. Restaurant Inquiries (best restaurant, kaunsa restaurant acha hai, restaurant list)
+  if (/best restaurant|top restaurant|kaun sa restaurant|restaurants list|open restaurants|restaurant dikhao/i.test(text)) {
+    return { intent: 'RESTAURANT_INQUIRY', rawText: text };
+  }
+
+  // 5. Checkout Intent (checkout karo, order place karo, pay karna hai, cart kholo)
   if (/checkout|order place|place order|bill kitna|pay karna|cart kholo|go to cart/i.test(text)) {
     return { intent: 'CHECKOUT', rawText: text };
   }
 
-  // 2. Add All from last recommendations
-  if (/sab.*cart|all.*cart|poora.*add|sab add/i.test(text) && lastRecommendations.length > 0) {
+  // 6. Add All from last recommendations
+  if (/sab.*cart|all.*cart|poora.*add|sab add|sab dal do|sab daalo/i.test(text) && lastRecommendations.length > 0) {
     return {
       intent: 'ADD_ALL_LAST',
       targetItems: lastRecommendations,
@@ -43,7 +64,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
     };
   }
 
-  // 3. Ordinal reference from last recommendations (e.g. "second wala add karo", "first item")
+  // 7. Ordinal reference from last recommendations (e.g. "second wala add karo", "first item")
   const ordinalMatch = text.match(/(first|second|third|fourth|1st|2nd|3rd|4th|pehla|doosra|teesra|1|2|3|4)\s*(?:wala|item|dish|option)?\s*(?:cart|add|daal|chahiye)/i);
   if (ordinalMatch && lastRecommendations.length > 0) {
     const word = ordinalMatch[1];
@@ -61,7 +82,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
     }
   }
 
-  // 4. Refinement Intent ("isme se sasta", "isme se ₹300 ke andar", "sirf veg dikhao")
+  // 8. Refinement Intent ("isme se sasta", "isme se ₹300 ke andar", "sirf veg dikhao")
   if (/isme se|inme se|isse sasta|sasta wala|cheaper|sirf veg|only veg/i.test(text) && lastRecommendations.length > 0) {
     let maxPrice = null;
     const priceMatch = text.match(/(\d{2,4})/);
@@ -76,7 +97,16 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
     };
   }
 
-  // 5. Direct Item Add to Cart ("2 paneer rolls aur 1 cold drink cart mein add karo")
+  // 9. Mood & Scenario Detection
+  let mood = null;
+  if (/mood off|sad|upset|boring|stressed|khush nahi/i.test(text)) mood = 'COMFORT_FOOD';
+  else if (/party|dost|friends|celebration|match/i.test(text)) mood = 'PARTY';
+  else if (/rain|barish|monsoon|mausam/i.test(text)) mood = 'RAINY';
+  else if (/romantic|date|candle|couple/i.test(text)) mood = 'ROMANTIC';
+  else if (/late night|raat ko|midnight|bhook lag rahi/i.test(text)) mood = 'LATE_NIGHT';
+  else if (/tired|thak gaya|lazy|aaj cook nahi karna/i.test(text)) mood = 'QUICK_MEAL';
+
+  // 10. Direct Item Add to Cart
   const isDirectAdd = /add.*cart|cart.*add|daal do|daalo|chahiye|order karo/i.test(text);
 
   // Budget extraction
@@ -85,7 +115,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
                       text.match(/(\d{2,4})\s*(?:rs|rupees|inr|₹|ke andar|tak)/i);
   if (budgetMatch) budget = parseInt(budgetMatch[1], 10);
 
-  // People / portion count
+  // People count
   let people = 1;
   const peopleMatch = text.match(/(\d+)\s*(?:logon|people|persons|pax|members|friends)/i);
   if (peopleMatch) people = Math.min(Math.max(parseInt(peopleMatch[1], 10), 1), 10);
@@ -100,6 +130,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
 
   return {
     intent: isDirectAdd ? 'DIRECT_ADD_SEARCH' : 'RECOMMEND',
+    mood,
     budget,
     people,
     isVeg,
@@ -109,7 +140,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
 };
 
 /**
- * Main AI Engine handler with Multi-Turn Memory & Autonomous Ordering.
+ * Main FoodieBot AI Recommendation & Conversation Engine.
  */
 const getFoodRecommendations = async (userQuery = '', conversationHistory = []) => {
   if (!userQuery || !userQuery.trim()) {
@@ -118,7 +149,52 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
 
   const analysis = analyzeIntentAndEntities(userQuery, conversationHistory);
 
-  // ── Action 1: Direct Checkout Trigger ─────────────────────────────────
+  // ── 1. Handle Gratitude & Courtesy ─────────────────────────────────────
+  if (analysis.intent === 'GRATITUDE') {
+    return {
+      intent: 'CONVERSATION',
+      reply: 'Aapka bahut-bahut swagat hai! 😊 FoodRush se kuch aur order karne ya food suggestion ke liye main hamesha hazir hoon. Enjoy your meal! 🍕❤️',
+      recommendations: [],
+    };
+  }
+
+  // ── 2. Handle Greetings & Capabilities ─────────────────────────────────
+  if (analysis.intent === 'GREETING_OR_IDENTITY') {
+    return {
+      intent: 'CONVERSATION',
+      reply: `Namaste! 👋 Main hoon FoodieBot 🤖, aapka personal FoodRush AI assistant!\n\nMain aapke liye ye sab kar sakta hoon:\n• 🍕 Mood, budget ya portion ke hisab se food recommend karna\n• 🏪 Top-rated restaurants & best dishes batana\n• 🛒 Direct bol kar ya likh kar cart mein dishes add karwana\n• 📦 Orders, delivery time aur payment ki details dena!\n\nAaj aapka kya khane ka man hai?`,
+      recommendations: [],
+    };
+  }
+
+  // ── 3. Handle Order Tracking & Delivery Support FAQ ─────────────────────
+  if (analysis.intent === 'ORDER_SUPPORT_FAQ') {
+    return {
+      intent: 'CONVERSATION',
+      reply: `📦 **FoodRush Order & Delivery Details**:\n\n• **Order Status**: Aap apna live order top bar mein **"My Orders"** page par track kar sakte hain.\n• **Delivery Time**: Average delivery time **30 se 40 minutes** rehta hai.\n• **Payment Modes**: Aap Razorpay (UPI, Cards, NetBanking) ya Cash on Delivery (COD) dono se pay kar sakte hain! 💳🛵`,
+      recommendations: [],
+    };
+  }
+
+  // ── 4. Handle Restaurant Inquiries ─────────────────────────────────────
+  if (analysis.intent === 'RESTAURANT_INQUIRY') {
+    const restaurants = await Restaurant.find({ isActive: true })
+      .select('name city rating cuisine address')
+      .sort({ rating: -1 })
+      .limit(5)
+      .lean();
+
+    if (restaurants.length > 0) {
+      const restList = restaurants.map((r, i) => `#${i + 1} 🏪 **${r.name}** (⭐ ${r.rating || 4.5}) • ${r.address?.city || 'Jaipur'}`).join('\n');
+      return {
+        intent: 'CONVERSATION',
+        reply: `FoodRush par top-rated restaurants ye hain:\n\n${restList}\n\nInme se kisi ka menu dekhna ho ya dish order karni ho to mujhe batayein! 🍕`,
+        recommendations: [],
+      };
+    }
+  }
+
+  // ── 5. Handle Direct Checkout Trigger ──────────────────────────────────
   if (analysis.intent === 'CHECKOUT') {
     return {
       intent: 'CHECKOUT',
@@ -128,7 +204,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     };
   }
 
-  // ── Action 2: Add All Last Recommendations to Cart ────────────────────
+  // ── 6. Handle Add All Last Recommendations ─────────────────────────────
   if (analysis.intent === 'ADD_ALL_LAST') {
     const itemsToAdd = analysis.targetItems.map((item) => ({ ...item, quantity: 1 }));
     const total = itemsToAdd.reduce((sum, i) => sum + (i.price || 0), 0);
@@ -145,7 +221,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     };
   }
 
-  // ── Action 3: Add Ordinal item ("second wala cart mein add karo") ──────
+  // ── 7. Handle Add Ordinal Item ("Second wala add karo") ─────────────────
   if (analysis.intent === 'ADD_ORDINAL') {
     const item = analysis.targetItem;
     return {
@@ -160,16 +236,11 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     };
   }
 
-  // ── Action 4: Refine previous recommendations ("isme se sasta wala") ───
+  // ── 8. Handle Refinement ("Isse sasta option") ──────────────────────────
   if (analysis.intent === 'REFINE_LAST') {
     let filtered = [...analysis.lastRecommendations];
-    if (analysis.maxPrice) {
-      filtered = filtered.filter((i) => i.price <= analysis.maxPrice);
-    }
-    if (analysis.isVegOnly) {
-      filtered = filtered.filter((i) => i.isVeg);
-    }
-    // Sort by price ascending
+    if (analysis.maxPrice) filtered = filtered.filter((i) => i.price <= analysis.maxPrice);
+    if (analysis.isVegOnly) filtered = filtered.filter((i) => i.isVeg);
     filtered.sort((a, b) => a.price - b.price);
 
     const reply = filtered.length > 0
@@ -180,11 +251,11 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
       intent: 'RECOMMEND',
       reply,
       recommendations: filtered.length > 0 ? filtered : analysis.lastRecommendations.slice(0, 2),
-      totalEstimatedPrice: filtered.reduce((s, i) => s + i.price, 0),
+      totalEstimatedPrice: filtered.reduce((s, i) => s + (i.price || 0), 0),
     };
   }
 
-  // ── Action 5: Standard Recommendation or Direct Item Add ──────────────
+  // ── 9. Smart Food & Mood Matching Engine ──────────────────────────────
   const filter = { isAvailable: true };
   if (analysis.isVeg !== null) filter.isVeg = analysis.isVeg;
 
@@ -213,8 +284,19 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
       if (catLower.includes(t)) score += 4;
     });
 
-    if (analysis.spicy && (item.spiceLevel === 'hot' || item.spiceLevel === 'extra-hot' || nameLower.includes('spicy') || descLower.includes('spicy'))) {
+    if (analysis.spicy && (item.spiceLevel === 'hot' || item.spiceLevel === 'extra-hot' || nameLower.includes('spicy') || descLower.includes('spicy') || nameLower.includes('tikka'))) {
       score += 10;
+    }
+
+    // Mood boosts
+    if (analysis.mood === 'COMFORT_FOOD' && (/dessert|pizza|pasta|chocolate|cake|brownie|shake/i.test(nameLower) || catLower === 'dessert')) {
+      score += 15;
+    }
+    if (analysis.mood === 'PARTY' && (/pizza|burger|roll|combo|starter/i.test(nameLower) || catLower === 'combo' || catLower === 'starter')) {
+      score += 15;
+    }
+    if (analysis.mood === 'RAINY' && (/starter|roll|tikka|chai|pakora|crispy|hot/i.test(nameLower) || catLower === 'starter')) {
+      score += 15;
     }
 
     score += (item.restaurant?.rating || 4.0) * 2;
@@ -248,7 +330,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     currentTotal = selected.reduce((s, i) => s + i.price, 0);
   }
 
-  // Format rich response
+  // Format tailored conversational reply
   let replyText = '';
   const portionLabel = (analysis.people || 1) > 1 ? `${analysis.people} people` : 'you';
 
@@ -266,10 +348,16 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     };
   }
 
-  if (analysis.budget) {
-    replyText = `I found ${selected.length} options for ${portionLabel} within ₹${analysis.budget}! Total: ₹${currentTotal}. 🍕🌶️`;
+  if (analysis.mood === 'COMFORT_FOOD') {
+    replyText = `Mood kharab hai to tension mat lijiye! Ye delicious comfort food dishes aapka mood instant fresh kar dengi! 🍫🍕✨`;
+  } else if (analysis.mood === 'PARTY') {
+    replyText = `Party aur doston ke liye perfect party feast recommendations! 🎉🍕🥤`;
+  } else if (analysis.mood === 'RAINY') {
+    replyText = `Barish ke suhane mausam ke liye hot & crispy delicious picks! 🌧️☕🥟`;
+  } else if (analysis.budget) {
+    replyText = `Maine aapke ₹${analysis.budget} budget mein ${portionLabel} ke liye ye best options curate kiye hain (Total: ₹${currentTotal})! 🍕🌶️`;
   } else if (analysis.spicy) {
-    replyText = `Here are top-rated spicy & flavorful recommendations for ${portionLabel}! 🔥🌶️`;
+    replyText = `Aapke liye spicy aur flavorful top-rated dishes ready hain! 🔥🌶️`;
   } else {
     replyText = `Here are chef-special recommendations curated for ${portionLabel}! 🍕✨`;
   }
