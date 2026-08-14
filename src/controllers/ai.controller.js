@@ -13,8 +13,8 @@ const { sendSuccess } = require('../utils/response');
  * Public endpoint for AI food assistant recommendations.
  */
 const recommendFood = catchAsync(async (req, res) => {
-  const { query } = req.body;
-  const result = await aiService.getFoodRecommendations(query);
+  const { query, history } = req.body;
+  const result = await aiService.getFoodRecommendations(query, history);
   sendSuccess(res, StatusCodes.OK, 'AI recommendations generated successfully.', result);
 });
 
