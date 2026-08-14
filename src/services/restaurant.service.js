@@ -1,10 +1,28 @@
 /**
  * @file src/services/restaurant.service.js
- * @description Restaurant business logic.
+ * @description Restaurant business logic with GeoJSON 2dsphere and Nearby Discovery.
  */
 
 const Restaurant = require('../models/restaurant.model');
 const AppError = require('../utils/AppError');
+
+/**
+ * Helper to calculate Haversine distance in meters between two lat/lng pairs.
+ */
+const haversineDistanceMeters = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // Earth radius in meters
+  const phi1 = (lat1 * Math.PI) / 180;
+  const phi2 = (lat2 * Math.PI) / 180;
+  const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+  const deltaLambda = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+            Math.cos(phi1) * Math.cos(phi2) *
+            Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c;
+};
 
 /**
  * Create a new restaurant (owner only).
@@ -32,7 +50,7 @@ const getAllRestaurants = async (query) => {
   if (city)      { filter['address.city'] = new RegExp(city, 'i'); }
 
   // Cuisine type filter
-  if (cuisine)   { filter.cuisineType = { $in: [new RegExp(cuisine, 'i')] }; }
+  if (cuisine)   { filter.cuisine = { $in: [new RegExp(cuisine, 'i')] }; }
 
   // Minimum rating filter
   if (minRating) { filter.rating = { $gte: Number(minRating) }; }
@@ -75,51 +93,7 @@ const getRestaurantById = async (restaurantId) => {
 };
 
 /**
- * Update a restaurant (owner of that restaurant only).
- * @param {string} restaurantId
- * @param {string} ownerId
- * @param {object} updateData
- */
-const updateRestaurant = async (restaurantId, ownerId, updateData) => {
-  const restaurant = await Restaurant.findById(restaurantId);
-
-  if (!restaurant) {
-    throw new AppError('Restaurant not found.', 404);
-  }
-
-  // Ownership check — admin can bypass (handled in controller)
-  if (restaurant.owner.toString() !== ownerId.toString()) {
-    throw new AppError('You are not authorized to update this restaurant.', 403);
-  }
-
-  const updated = await Restaurant.findByIdAndUpdate(restaurantId, updateData, {
-    new: true,           // Return updated document
-    runValidators: true, // Run schema validators on update
-  });
-
-  return updated;
-};
-
-/**
- * Delete a restaurant (admin only — soft delete by setting isActive: false).
- * @param {string} restaurantId
- */
-const deleteRestaurant = async (restaurantId) => {
-  const restaurant = await Restaurant.findByIdAndUpdate(
-    restaurantId,
-    { isActive: false },
-    { new: true }
-  );
-
-  if (!restaurant) {
-    throw new AppError('Restaurant not found.', 404);
-  }
-
-  return restaurant;
-};
-
-/**
- * Find nearby restaurants within radius using MongoDB $geoNear aggregation.
+ * Find nearby restaurants within radius using MongoDB $geoNear or Haversine fallback.
  * @param {number|string} lat - Latitude
  * @param {number|string} lng - Longitude
  * @param {number|string} radius - Radius in meters (default: 5000)
@@ -145,28 +119,57 @@ const getNearbyRestaurants = async (lat, lng, radius = 5000, query = {}) => {
     matchFilter.name = new RegExp(query.name, 'i');
   }
 
-  const pipeline = [
-    {
-      $geoNear: {
-        near: {
-          type: 'Point',
-          coordinates: [longitude, latitude],
-        },
-        distanceField: 'distanceInMeters',
-        maxDistance: maxDistance,
-        spherical: true,
-        query: matchFilter,
-      },
-    },
-    {
-      $sort: { distanceInMeters: 1, rating: -1 },
-    },
-    {
-      $limit: 30,
-    },
-  ];
+  let results = [];
 
-  const results = await Restaurant.aggregate(pipeline);
+  // Try MongoDB $geoNear aggregation first
+  try {
+    const pipeline = [
+      {
+        $geoNear: {
+          near: {
+            type: 'Point',
+            coordinates: [longitude, latitude],
+          },
+          distanceField: 'distanceInMeters',
+          maxDistance: maxDistance,
+          spherical: true,
+          query: matchFilter,
+        },
+      },
+      {
+        $sort: { distanceInMeters: 1, rating: -1 },
+      },
+      {
+        $limit: 30,
+      },
+    ];
+
+    results = await Restaurant.aggregate(pipeline);
+  } catch (err) {
+    console.warn('MongoDB $geoNear aggregation fallback:', err.message);
+  }
+
+  // If $geoNear yielded 0 results or encountered missing 2dsphere coordinates on older records:
+  if (!results || results.length === 0) {
+    const allRests = await Restaurant.find(matchFilter).lean();
+    results = allRests.map((r) => {
+      let rLat = latitude;
+      let rLng = longitude;
+
+      if (r.location?.coordinates && r.location.coordinates.length === 2) {
+        [rLng, rLat] = r.location.coordinates;
+      }
+
+      const dist = Math.round(haversineDistanceMeters(latitude, longitude, rLat, rLng));
+      return {
+        ...r,
+        distanceInMeters: dist,
+      };
+    });
+
+    results = results.filter((r) => r.distanceInMeters <= maxDistance);
+    results.sort((a, b) => a.distanceInMeters - b.distanceInMeters);
+  }
 
   return results.map((r) => {
     const dist = Math.round(r.distanceInMeters || 0);
@@ -179,6 +182,50 @@ const getNearbyRestaurants = async (lat, lng, radius = 5000, query = {}) => {
       isOpen: r.isActive !== false,
     };
   });
+};
+
+/**
+ * Update a restaurant (owner of that restaurant only).
+ * @param {string} restaurantId
+ * @param {string} ownerId
+ * @param {object} updateData
+ */
+const updateRestaurant = async (restaurantId, ownerId, updateData) => {
+  const restaurant = await Restaurant.findById(restaurantId);
+
+  if (!restaurant) {
+    throw new AppError('Restaurant not found.', 404);
+  }
+
+  // Ownership check
+  if (restaurant.owner.toString() !== ownerId.toString()) {
+    throw new AppError('You are not authorized to update this restaurant.', 403);
+  }
+
+  const updated = await Restaurant.findByIdAndUpdate(restaurantId, updateData, {
+    new: true,
+    runValidators: true,
+  });
+
+  return updated;
+};
+
+/**
+ * Delete a restaurant (admin only — soft delete by setting isActive: false).
+ * @param {string} restaurantId
+ */
+const deleteRestaurant = async (restaurantId) => {
+  const restaurant = await Restaurant.findByIdAndUpdate(
+    restaurantId,
+    { isActive: false },
+    { new: true }
+  );
+
+  if (!restaurant) {
+    throw new AppError('Restaurant not found.', 404);
+  }
+
+  return restaurant;
 };
 
 /**
