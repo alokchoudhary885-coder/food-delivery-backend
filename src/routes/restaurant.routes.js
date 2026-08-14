@@ -36,7 +36,8 @@ router
   .get(restaurantController.getAllRestaurants)
   .post(protect, restrictTo('owner', 'admin'), validate(createRestaurantSchema), restaurantController.createRestaurant);
 
-// IMPORTANT: /my-restaurants must come BEFORE /:id to avoid being caught as an ID
+// IMPORTANT: /nearby and /my-restaurants must come BEFORE /:id to avoid being caught as an ID
+router.get('/nearby', restaurantController.getNearbyRestaurants);
 router.get('/my-restaurants', protect, restrictTo('owner'), restaurantController.getMyRestaurants);
 
 router

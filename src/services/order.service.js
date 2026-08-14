@@ -10,12 +10,15 @@ const AppError = require('../utils/AppError');
 
 // Valid transitions for the order state machine
 const VALID_TRANSITIONS = {
-  pending:          ['confirmed', 'cancelled'],
-  confirmed:        ['preparing', 'cancelled'],
-  preparing:        ['out_for_delivery', 'cancelled'],
+  pending:          ['confirmed', 'accepted', 'cancelled', 'rejected'],
+  confirmed:        ['preparing', 'cancelled', 'rejected'],
+  accepted:         ['preparing', 'cancelled', 'rejected'],
+  preparing:        ['ready', 'out_for_delivery', 'cancelled'],
+  ready:            ['out_for_delivery', 'delivered', 'cancelled'],
   out_for_delivery: ['delivered'],
   delivered:        [],
   cancelled:        [],
+  rejected:         [],
 };
 
 /**

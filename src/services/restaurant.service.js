@@ -119,6 +119,69 @@ const deleteRestaurant = async (restaurantId) => {
 };
 
 /**
+ * Find nearby restaurants within radius using MongoDB $geoNear aggregation.
+ * @param {number|string} lat - Latitude
+ * @param {number|string} lng - Longitude
+ * @param {number|string} radius - Radius in meters (default: 5000)
+ * @param {object} query - Optional filters (cuisine, minRating, name)
+ */
+const getNearbyRestaurants = async (lat, lng, radius = 5000, query = {}) => {
+  const latitude = parseFloat(lat);
+  const longitude = parseFloat(lng);
+  const maxDistance = parseFloat(radius) || 5000;
+
+  if (isNaN(latitude) || isNaN(longitude)) {
+    throw new AppError('Valid latitude and longitude coordinates are required for nearby search.', 400);
+  }
+
+  const matchFilter = { isActive: true };
+  if (query.cuisine) {
+    matchFilter.cuisine = { $in: [new RegExp(query.cuisine, 'i')] };
+  }
+  if (query.minRating) {
+    matchFilter.rating = { $gte: Number(query.minRating) };
+  }
+  if (query.name) {
+    matchFilter.name = new RegExp(query.name, 'i');
+  }
+
+  const pipeline = [
+    {
+      $geoNear: {
+        near: {
+          type: 'Point',
+          coordinates: [longitude, latitude],
+        },
+        distanceField: 'distanceInMeters',
+        maxDistance: maxDistance,
+        spherical: true,
+        query: matchFilter,
+      },
+    },
+    {
+      $sort: { distanceInMeters: 1, rating: -1 },
+    },
+    {
+      $limit: 30,
+    },
+  ];
+
+  const results = await Restaurant.aggregate(pipeline);
+
+  return results.map((r) => {
+    const dist = Math.round(r.distanceInMeters || 0);
+    const formattedDistance = dist < 1000 ? `${dist} m` : `${(dist / 1000).toFixed(1)} km`;
+    return {
+      ...r,
+      _id: r._id,
+      distanceInMeters: dist,
+      formattedDistance,
+      isOpen: r.isActive !== false,
+    };
+  });
+};
+
+/**
  * Get restaurants owned by a specific user.
  * @param {string} ownerId
  */
@@ -131,6 +194,7 @@ module.exports = {
   createRestaurant,
   getAllRestaurants,
   getRestaurantById,
+  getNearbyRestaurants,
   updateRestaurant,
   deleteRestaurant,
   getMyRestaurants,

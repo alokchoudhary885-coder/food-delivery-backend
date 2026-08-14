@@ -62,8 +62,19 @@ const updateRestaurant = catchAsync(async (req, res) => {
  * @access Private (admin)
  */
 const deleteRestaurant = catchAsync(async (req, res) => {
-  await restaurantService.deleteRestaurant(req.params.id);
-  sendSuccess(res, StatusCodes.OK, 'Restaurant deactivated successfully.', null);
+/**
+ * GET /api/v1/restaurants/nearby
+ * @access Public
+ */
+const getNearbyRestaurants = catchAsync(async (req, res) => {
+  const { lat, lng, radius, cuisine, minRating, name } = req.query;
+  const restaurants = await restaurantService.getNearbyRestaurants(
+    lat,
+    lng,
+    radius,
+    { cuisine, minRating, name }
+  );
+  sendSuccess(res, StatusCodes.OK, 'Nearby restaurants fetched successfully.', { restaurants, total: restaurants.length });
 });
 
 module.exports = {
@@ -71,6 +82,7 @@ module.exports = {
   getAllRestaurants,
   getMyRestaurants,
   getRestaurantById,
+  getNearbyRestaurants,
   updateRestaurant,
   deleteRestaurant,
 };

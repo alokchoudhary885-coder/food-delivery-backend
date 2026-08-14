@@ -84,6 +84,16 @@ const restaurantSchema = new mongoose.Schema(
       default: 0,
       min: [0, 'Delivery fee cannot be negative'],
     },
+    location: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point',
+      },
+      coordinates: {
+        type: [Number], // [longitude, latitude]
+      },
+    },
   },
   {
     timestamps: true,
@@ -101,7 +111,8 @@ restaurantSchema.virtual('menu', {
   localField: '_id',
 });
 
-// ── Index for geo-search and common queries ────────────────────────────────
+// ── Indexes for geo-search and common queries ─────────────────────────────
+restaurantSchema.index({ location: '2dsphere' });
 restaurantSchema.index({ 'address.city': 1, isActive: 1 });
 restaurantSchema.index({ cuisine: 1 });
 restaurantSchema.index({ owner: 1 });

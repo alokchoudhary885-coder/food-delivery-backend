@@ -1,16 +1,18 @@
 /**
  * @file src/services/ai.service.js
- * @description FoodRush Comprehensive Conversational Food AI & Autonomous Ordering Engine.
+ * @description FoodRush Level 3 Location-Aware Conversational Food AI & Autonomous Ordering Engine.
  * Supports:
  * 1. Social & Conversational Chitchat (Thanks, Greetings, Help, Capabilities)
- * 2. Mood & Scenario-Based Food Recommendations (Party, Sad/Comfort, Romantic, Rainy/Monsoon, Late Night)
- * 3. Live Restaurant Directory & Ratings Inquiries
- * 4. Order Tracking, Delivery & Payment FAQs
- * 5. Multi-Turn Conversation Memory & Autonomous Direct Cart Actions
+ * 2. Location-Aware Discovery using Backend Restaurant Service
+ * 3. Mood & Scenario-Based Food Recommendations (Party, Sad/Comfort, Romantic, Rainy/Monsoon, Late Night)
+ * 4. Live Restaurant Directory & Ratings Inquiries
+ * 5. Order Tracking, Delivery & Payment FAQs
+ * 6. Multi-Turn Conversation Memory & Autonomous Direct Cart Actions
  */
 
 const MenuItem = require('../models/menuItem.model');
 const Restaurant = require('../models/restaurant.model');
+const restaurantService = require('./restaurant.service');
 const AppError = require('../utils/AppError');
 
 /**
@@ -97,7 +99,16 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
     };
   }
 
-  // 9. Mood & Scenario Detection
+  // 9. Location Radius extraction (e.g. "3 km ke andar", "5 km ke andar", "nearby")
+  let radiusInMeters = null;
+  const radiusMatch = text.match(/(\d+)\s*(?:km|kilo\s*meter|kms)/i);
+  if (radiusMatch) {
+    radiusInMeters = parseInt(radiusMatch[1], 10) * 1000;
+  } else if (/mere paas|nearby|aas paas|close by|around me/i.test(text)) {
+    radiusInMeters = 5000;
+  }
+
+  // 10. Mood & Scenario Detection
   let mood = null;
   if (/mood off|sad|upset|boring|stressed|khush nahi/i.test(text)) mood = 'COMFORT_FOOD';
   else if (/party|dost|friends|celebration|match/i.test(text)) mood = 'PARTY';
@@ -106,7 +117,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
   else if (/late night|raat ko|midnight|bhook lag rahi/i.test(text)) mood = 'LATE_NIGHT';
   else if (/tired|thak gaya|lazy|aaj cook nahi karna/i.test(text)) mood = 'QUICK_MEAL';
 
-  // 10. Direct Item Add to Cart
+  // 11. Direct Item Add to Cart
   const isDirectAdd = /add.*cart|cart.*add|daal do|daalo|chahiye|order karo/i.test(text);
 
   // Budget extraction
@@ -130,6 +141,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
 
   return {
     intent: isDirectAdd ? 'DIRECT_ADD_SEARCH' : 'RECOMMEND',
+    radiusInMeters,
     mood,
     budget,
     people,
@@ -142,7 +154,7 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
 /**
  * Main FoodieBot AI Recommendation & Conversation Engine.
  */
-const getFoodRecommendations = async (userQuery = '', conversationHistory = []) => {
+const getFoodRecommendations = async (userQuery = '', conversationHistory = [], userLocation = null) => {
   if (!userQuery || !userQuery.trim()) {
     throw new AppError('Please provide a query for FoodieBot AI.', 400);
   }
@@ -162,7 +174,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
   if (analysis.intent === 'GREETING_OR_IDENTITY') {
     return {
       intent: 'CONVERSATION',
-      reply: `Namaste! 👋 Main hoon FoodieBot 🤖, aapka personal FoodRush AI assistant!\n\nMain aapke liye ye sab kar sakta hoon:\n• 🍕 Mood, budget ya portion ke hisab se food recommend karna\n• 🏪 Top-rated restaurants & best dishes batana\n• 🛒 Direct bol kar ya likh kar cart mein dishes add karwana\n• 📦 Orders, delivery time aur payment ki details dena!\n\nAaj aapka kya khane ka man hai?`,
+      reply: `Namaste! 👋 Main hoon FoodieBot 🤖, aapka personal FoodRush AI assistant!\n\nMain aapke liye ye sab kar sakta hoon:\n• 📍 Aapke location ke nearby open restaurants se food dhoondhna\n• 🍕 Mood, budget ya portion ke hisab se food recommend karna\n• 🏪 Top-rated restaurants & best dishes batana\n• 🛒 Direct bol kar ya likh kar cart mein dishes add karwana\n• 📦 Orders, delivery time aur payment ki details dena!\n\nAaj aapka kya khane ka man hai?`,
       recommendations: [],
     };
   }
@@ -178,14 +190,29 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
 
   // ── 4. Handle Restaurant Inquiries ─────────────────────────────────────
   if (analysis.intent === 'RESTAURANT_INQUIRY') {
-    const restaurants = await Restaurant.find({ isActive: true })
-      .select('name city rating cuisine address')
-      .sort({ rating: -1 })
-      .limit(5)
-      .lean();
+    let restaurants = [];
+    if (userLocation?.lat && userLocation?.lng) {
+      try {
+        restaurants = await restaurantService.getNearbyRestaurants(userLocation.lat, userLocation.lng, 10000);
+      } catch {
+        restaurants = [];
+      }
+    }
+
+    if (!restaurants || restaurants.length === 0) {
+      restaurants = await Restaurant.find({ isActive: true })
+        .select('name city rating cuisine address')
+        .sort({ rating: -1 })
+        .limit(5)
+        .lean();
+    }
 
     if (restaurants.length > 0) {
-      const restList = restaurants.map((r, i) => `#${i + 1} 🏪 **${r.name}** (⭐ ${r.rating || 4.5}) • ${r.address?.city || 'Jaipur'}`).join('\n');
+      const restList = restaurants.slice(0, 5).map((r, i) => {
+        const distStr = r.formattedDistance ? ` • 📍 ${r.formattedDistance}` : '';
+        return `#${i + 1} 🏪 **${r.name}** (⭐ ${r.rating || 4.5})${distStr}`;
+      }).join('\n');
+
       return {
         intent: 'CONVERSATION',
         reply: `FoodRush par top-rated restaurants ye hain:\n\n${restList}\n\nInme se kisi ka menu dekhna ho ya dish order karni ho to mujhe batayein! 🍕`,
@@ -255,19 +282,46 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     };
   }
 
-  // ── 9. Smart Food & Mood Matching Engine ──────────────────────────────
+  // ── 9. Location-Aware Nearby Restaurants Resolution ────────────────────
+  let allowedRestaurantIds = null;
+  let nearbyRestaurantMap = {};
+
+  if (userLocation?.lat && userLocation?.lng) {
+    const radiusToUse = analysis.radiusInMeters || 10000;
+    try {
+      const nearbyRests = await restaurantService.getNearbyRestaurants(userLocation.lat, userLocation.lng, radiusToUse);
+      if (nearbyRests && nearbyRests.length > 0) {
+        allowedRestaurantIds = nearbyRests.map((r) => r._id);
+        nearbyRests.forEach((r) => {
+          nearbyRestaurantMap[r._id.toString()] = r;
+        });
+      }
+    } catch (err) {
+      console.warn('AI nearby restaurants lookup fallback:', err.message);
+    }
+  }
+
+  // Build items query
   const filter = { isAvailable: true };
   if (analysis.isVeg !== null) filter.isVeg = analysis.isVeg;
+  if (allowedRestaurantIds && allowedRestaurantIds.length > 0) {
+    filter.restaurant = { $in: allowedRestaurantIds };
+  }
 
   let allItems = await MenuItem.find(filter)
-    .populate('restaurant', 'name city rating image isActive')
+    .populate('restaurant', 'name city rating image isActive location')
     .lean();
 
   allItems = allItems.filter((i) => i.restaurant && i.restaurant.isActive !== false);
+
+  // Fallback if no items found in strict nearby radius
   if (allItems.length === 0) {
-    allItems = await MenuItem.find({ isAvailable: true })
-      .populate('restaurant', 'name city rating image')
+    const fallbackFilter = { isAvailable: true };
+    if (analysis.isVeg !== null) fallbackFilter.isVeg = analysis.isVeg;
+    allItems = await MenuItem.find(fallbackFilter)
+      .populate('restaurant', 'name city rating image isActive location')
       .lean();
+    allItems = allItems.filter((i) => i.restaurant && i.restaurant.isActive !== false);
   }
 
   // Scoring engine
@@ -300,7 +354,19 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
     }
 
     score += (item.restaurant?.rating || 4.0) * 2;
-    return { ...item, score };
+
+    // Attach nearby formatted distance if available
+    const restIdStr = item.restaurant?._id?.toString();
+    const distanceInfo = nearbyRestaurantMap[restIdStr];
+    if (distanceInfo?.formattedDistance) {
+      score += 8; // Prioritize closer restaurants
+    }
+
+    return {
+      ...item,
+      score,
+      formattedDistance: distanceInfo?.formattedDistance || null,
+    };
   });
 
   scored.sort((a, b) => b.score - a.score);
@@ -333,6 +399,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
   // Format tailored conversational reply
   let replyText = '';
   const portionLabel = (analysis.people || 1) > 1 ? `${analysis.people} people` : 'you';
+  const nearbyTag = analysis.radiusInMeters ? ` (${(analysis.radiusInMeters / 1000)} km ke andar)` : (userLocation ? ' nearby' : '');
 
   if (analysis.intent === 'DIRECT_ADD_SEARCH' && selected.length > 0) {
     const topItem = selected[0];
@@ -349,17 +416,17 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
   }
 
   if (analysis.mood === 'COMFORT_FOOD') {
-    replyText = `Mood kharab hai to tension mat lijiye! Ye delicious comfort food dishes aapka mood instant fresh kar dengi! 🍫🍕✨`;
+    replyText = `Mood theek karne ke liye ye delicious comfort food dishes${nearbyTag} aapka mood instant fresh kar dengi! 🍫🍕✨`;
   } else if (analysis.mood === 'PARTY') {
-    replyText = `Party aur doston ke liye perfect party feast recommendations! 🎉🍕🥤`;
+    replyText = `Party aur doston ke liye perfect party feast recommendations${nearbyTag}! 🎉🍕🥤`;
   } else if (analysis.mood === 'RAINY') {
-    replyText = `Barish ke suhane mausam ke liye hot & crispy delicious picks! 🌧️☕🥟`;
+    replyText = `Barish ke mausam ke liye hot & crispy delicious picks${nearbyTag}! 🌧️☕🥟`;
   } else if (analysis.budget) {
-    replyText = `Maine aapke ₹${analysis.budget} budget mein ${portionLabel} ke liye ye best options curate kiye hain (Total: ₹${currentTotal})! 🍕🌶️`;
+    replyText = `Maine aapke ₹${analysis.budget} budget mein ${portionLabel} ke liye ye best options${nearbyTag} curate kiye hain (Total: ₹${currentTotal})! 🍕🌶️`;
   } else if (analysis.spicy) {
-    replyText = `Aapke liye spicy aur flavorful top-rated dishes ready hain! 🔥🌶️`;
+    replyText = `Aapke liye spicy aur flavorful top-rated dishes${nearbyTag} ready hain! 🔥🌶️`;
   } else {
-    replyText = `Here are chef-special recommendations curated for ${portionLabel}! 🍕✨`;
+    replyText = `Here are chef-special recommendations${nearbyTag} curated for ${portionLabel}! 🍕✨`;
   }
 
   return {
@@ -375,6 +442,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = []) 
       category: item.category,
       isVeg: item.isVeg,
       spiceLevel: item.spiceLevel,
+      formattedDistance: item.formattedDistance || null,
       image: item.image || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500',
       restaurant: {
         _id: item.restaurant?._id,

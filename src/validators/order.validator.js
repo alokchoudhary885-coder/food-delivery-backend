@@ -37,12 +37,12 @@ const createOrderSchema = Joi.object({
 
 const updateOrderStatusSchema = Joi.object({
   status: Joi.string()
-    .valid('confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled')
+    .valid('confirmed', 'accepted', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'cancelled', 'rejected')
     .required(),
   cancellationReason: Joi.when('status', {
-    is: 'cancelled',
-    then: Joi.string().required().messages({ 'any.required': 'Cancellation reason is required' }),
-    otherwise: Joi.optional(),
+    is: Joi.string().valid('cancelled', 'rejected'),
+    then: Joi.string().optional().allow(''),
+    otherwise: Joi.optional().allow(''),
   }),
 });
 
