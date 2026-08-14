@@ -30,6 +30,7 @@ const paymentRoutes    = require('./routes/payment.routes');
 const uploadRoutes     = require('./routes/upload.routes');
 const reviewRoutes     = require('./routes/review.routes');
 const aiRoutes         = require('./routes/ai.routes');
+const restaurantController = require('./controllers/restaurant.controller');
 
 // ── Error handler ─────────────────────────────────────────────────────────────
 const globalErrorHandler = require('./middlewares/error.middleware');
@@ -105,6 +106,7 @@ app.use('/api/v1/payments',    paymentRoutes);
 app.use('/api/v1/upload',      uploadRoutes);      // Cloudinary image upload
 app.use('/api/v1/reviews',     reviewRoutes);
 app.use('/api/v1/ai',          aiRoutes);
+app.all('/api/v1/seed',        restaurantController.seedRestaurants);
 
 // ── 6. 404 Handler ────────────────────────────────────────────────────────────
 // Catches any request that didn't match a registered route above.

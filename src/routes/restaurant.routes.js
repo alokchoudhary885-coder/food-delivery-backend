@@ -38,7 +38,8 @@ router
 
 // IMPORTANT: /nearby, /seed and /my-restaurants must come BEFORE /:id to avoid being caught as an ID
 router.get('/nearby', restaurantController.getNearbyRestaurants);
-router.all('/seed', restaurantController.seedRestaurants);
+router.get('/seed', restaurantController.seedRestaurants);
+router.post('/seed', restaurantController.seedRestaurants);
 router.get('/my-restaurants', protect, restrictTo('owner'), restaurantController.getMyRestaurants);
 
 router
