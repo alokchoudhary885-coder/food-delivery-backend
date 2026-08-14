@@ -102,9 +102,9 @@ const updatePassword = async (userId, currentPassword, newPassword) => {
 };
 
 /**
- * Send OTP to mobile number.
+ * Send real OTP to mobile number via Fast2SMS / SMS gateway.
  * @param {string} phone
- * @returns {{ phone: string, otp: string, message: string }}
+ * @returns {{ phone: string, message: string }}
  */
 const sendOTP = async (phone) => {
   if (!phone || !/^[0-9]{10}$/.test(phone)) {
@@ -130,7 +130,33 @@ const sendOTP = async (phone) => {
     await user.save({ validateBeforeSave: false });
   }
 
-  return { phone, otp, message: 'OTP sent successfully' };
+  // Dispatch real SMS to Indian mobile carrier if FAST2SMS_API_KEY is configured
+  const fast2smsKey = process.env.FAST2SMS_API_KEY;
+  if (fast2smsKey) {
+    try {
+      const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+        method: 'POST',
+        headers: {
+          'authorization': fast2smsKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          route: 'otp',
+          variables_values: otp,
+          numbers: phone,
+        }),
+      });
+      const data = await response.json();
+      console.log(`📲 Fast2SMS real SMS dispatched to +91 ${phone}:`, data);
+    } catch (smsErr) {
+      console.error('⚠️ Fast2SMS dispatch error:', smsErr.message);
+    }
+  } else {
+    console.log(`ℹ️ [FoodRush SMS] Generated OTP for +91 ${phone}: ${otp}`);
+  }
+
+  // Never return otp in production response to frontend!
+  return { phone, message: 'OTP sent successfully to your mobile number' };
 };
 
 /**
