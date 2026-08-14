@@ -205,7 +205,7 @@ const verifyOTP = async (phone, otp) => {
  * @returns {{ user: object, token: string }}
  */
 const authenticateFirebaseUser = async (payload) => {
-  const { email, phone, name, avatar, authProvider } = payload;
+  const { email, phone, name, avatar, authProvider, role } = payload;
 
   let query = {};
   if (email) {
@@ -228,13 +228,14 @@ const authenticateFirebaseUser = async (payload) => {
       phone: cleanPhone,
       avatar: avatar || '',
       auth_provider: authProvider || (email ? 'google' : 'phone'),
-      role: 'customer',
+      role: role || 'customer',
     });
   } else {
-    // Update profile info if missing
+    // Update profile info and role if provided
     if (avatar && !user.avatar) user.avatar = avatar;
     if (authProvider && !user.auth_provider) user.auth_provider = authProvider;
-    if (name && user.name.startsWith('Customer_')) user.name = name;
+    if (role && (role === 'owner' || role === 'customer')) user.role = role;
+    if (name && (user.name.startsWith('Customer_') || !user.name)) user.name = name;
     await user.save({ validateBeforeSave: false });
   }
 
