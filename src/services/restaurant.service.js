@@ -237,6 +237,67 @@ const getMyRestaurants = async (ownerId) => {
   return restaurants;
 };
 
+/**
+ * Seed top-rated restaurants and menu items into MongoDB.
+ */
+const seedRestaurants = async () => {
+  const { RESTAURANTS_DATA } = require('../seeds/seedData');
+  const MenuItem = require('../models/menuItem.model');
+  const User = require('../models/user.model');
+
+  let owner = await User.findOne({ role: 'owner' });
+  if (!owner) {
+    owner = await User.findOne();
+  }
+  if (!owner) {
+    throw new AppError('No user found to assign as owner for seed data.', 400);
+  }
+
+  let createdCount = 0;
+  let itemsCount = 0;
+
+  for (const rData of RESTAURANTS_DATA) {
+    let existing = await Restaurant.findOne({ name: rData.name });
+    if (!existing) {
+      existing = await Restaurant.create({
+        name: rData.name,
+        description: rData.description,
+        cuisine: rData.cuisine,
+        phone: rData.phone,
+        deliveryTime: rData.deliveryTime,
+        deliveryFee: rData.deliveryFee,
+        minimumOrder: rData.minimumOrder,
+        rating: rData.rating,
+        totalRatings: rData.totalRatings,
+        image: rData.image,
+        address: rData.address,
+        location: rData.location,
+        owner: owner._id,
+        isActive: true,
+      });
+      createdCount++;
+    }
+
+    for (const item of rData.menu) {
+      const existingItem = await MenuItem.findOne({ name: item.name, restaurant: existing._id });
+      if (!existingItem) {
+        await MenuItem.create({
+          ...item,
+          restaurant: existing._id,
+          isAvailable: true,
+        });
+        itemsCount++;
+      }
+    }
+  }
+
+  return {
+    restaurantsAdded: createdCount,
+    menuItemsAdded: itemsCount,
+    totalRestaurants: await Restaurant.countDocuments({ isActive: true }),
+  };
+};
+
 module.exports = {
   createRestaurant,
   getAllRestaurants,
@@ -245,4 +306,5 @@ module.exports = {
   updateRestaurant,
   deleteRestaurant,
   getMyRestaurants,
+  seedRestaurants,
 };

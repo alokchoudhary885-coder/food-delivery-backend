@@ -73,12 +73,13 @@ const updateRestaurant = catchAsync(async (req, res) => {
 });
 
 /**
- * DELETE /api/v1/restaurants/:id
- * @access Private (admin)
+ * POST /api/v1/restaurants/seed
+ * Seed top-rated restaurants & menus
+ * @access Public / Dev
  */
-const deleteRestaurant = catchAsync(async (req, res) => {
-  await restaurantService.deleteRestaurant(req.params.id);
-  sendSuccess(res, StatusCodes.OK, 'Restaurant deactivated successfully.', null);
+const seedRestaurants = catchAsync(async (req, res) => {
+  const result = await restaurantService.seedRestaurants();
+  sendSuccess(res, StatusCodes.OK, 'Restaurants & Menus seeded successfully.', result);
 });
 
 module.exports = {
@@ -89,4 +90,5 @@ module.exports = {
   getNearbyRestaurants,
   updateRestaurant,
   deleteRestaurant,
+  seedRestaurants,
 };
