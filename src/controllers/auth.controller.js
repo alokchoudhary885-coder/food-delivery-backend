@@ -71,9 +71,11 @@ const googleLogin = catchAsync(async (req, res) => {
   sendSuccess(res, StatusCodes.OK, 'Logged in with Google successfully.', { user, token });
 });
 
-const firebaseLogin = catchAsync(async (req, res) => {
-  const { user, token } = await authService.authenticateFirebaseUser(req.body);
-  sendSuccess(res, StatusCodes.OK, 'Production authentication successful.', { user, token });
+const resetPassword = catchAsync(async (req, res) => {
+  const { phone, otp, newPassword } = req.body;
+  const { user, token } = await authService.resetPasswordWithOTP(phone, otp, newPassword);
+  sendSuccess(res, StatusCodes.OK, 'Password has been reset successfully. Logged in!', { user, token });
 });
 
-module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP, googleLogin, firebaseLogin };
+module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP, googleLogin, firebaseLogin, resetPassword };
+

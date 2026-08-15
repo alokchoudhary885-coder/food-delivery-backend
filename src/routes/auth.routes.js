@@ -20,8 +20,10 @@ router.post('/register', validate(registerSchema), authController.register);
 router.post('/login',    validate(loginSchema),    authController.login);
 router.post('/send-otp',   authController.sendOTP);
 router.post('/verify-otp', authController.verifyOTP);
+router.post('/reset-password', authController.resetPassword);
 router.post('/google',     authController.googleLogin);
 router.post('/firebase-login', authController.firebaseLogin);
+
 
 // Protected routes (JWT required)
 router.get('/me',                protect, authController.getMe);
