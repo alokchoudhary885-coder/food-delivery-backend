@@ -218,84 +218,72 @@ const sendOTP = async (phone) => {
     user = existingUser;
   }
 
-  // ── Dispatch real SMS via Fast2SMS ────────────────────────────────────────
-  const fast2smsKey = process.env.FAST2SMS_API_KEY;
-  if (!fast2smsKey) {
+  // ── Dispatch SMS via Configured Provider (2Factor.in / Fast2SMS) ──────────
+  const twoFactorKey = process.env.TWOFACTOR_API_KEY;
+  const fast2smsKey  = process.env.FAST2SMS_API_KEY;
+
+  if (!twoFactorKey && !fast2smsKey) {
     // Clear the OTP so the DB is not left with an orphaned, undeliverable OTP.
     user.otp          = undefined;
     user.otpExpiresAt = undefined;
     await user.save({ validateBeforeSave: false });
-    console.error('[FoodRush Auth] FAST2SMS_API_KEY is not configured in environment variables.');
+    console.error('[FoodRush Auth] No SMS provider API key configured in environment variables.');
     throw new AppError('SMS service is not configured. Please contact support.', 503);
   }
 
-  let smsResponse;
+  let smsAccepted = false;
+  let providerLog = '';
+
   try {
-    // 1. Dispatch via Fast2SMS Quick SMS (route: 'q') — works immediately with wallet balance without requiring website/DLT verification
-    let httpRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-      method: 'POST',
-      headers: {
-        'authorization':  fast2smsKey,   // key is NOT logged anywhere
-        'Content-Type':   'application/json',
-      },
-      body: JSON.stringify({
-        route:            'q',
-        message:          `Your FoodRush verification OTP is ${otp}. Valid for 10 minutes. Do not share it with anyone.`,
-        language:         'english',
-        flash:            0,
-        numbers:          cleanPhone,
-      }),
-    });
+    if (twoFactorKey) {
+      // ── 2Factor.in Integration ─────────────────────────────────────────────
+      // Endpoint: https://2factor.in/API/V1/{api_key}/SMS/{phone}/{otp}/{template_optional}
+      const templateSuffix = process.env.TWOFACTOR_OTP_TEMPLATE ? `/${encodeURIComponent(process.env.TWOFACTOR_OTP_TEMPLATE)}` : '';
+      const twoFactorUrl = `https://2factor.in/API/V1/${twoFactorKey}/SMS/+91${cleanPhone}/${otp}${templateSuffix}`;
 
-    smsResponse = await httpRes.json();
+      const res = await fetch(twoFactorUrl);
+      const data = await res.json();
 
-    // Safe diagnostic log — no OTP, no API key
-    console.log(
-      `[FoodRush Auth] Fast2SMS Quick SMS HTTP ${httpRes.status} for ******${cleanPhone.slice(-4)}` +
-      ` | return: ${smsResponse?.return}` +
-      ` | status_code: ${smsResponse?.status_code}` +
-      ` | message: ${JSON.stringify(smsResponse?.message)}`
-    );
+      // Safe diagnostic log — zero secrets, zero OTP
+      providerLog = `2Factor.in HTTP ${res.status} | Status: ${data?.Status} | Details: ${data?.Details}`;
+      console.log(`[FoodRush Auth] ${providerLog} for ******${cleanPhone.slice(-4)}`);
 
-    let smsAccepted = smsResponse?.return === true || smsResponse?.status_code === 200;
-
-    // Fallback: If route 'q' fails with a specific route error, attempt route 'otp'
-    if (!smsAccepted) {
-      const fallbackRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+      if (data && data.Status === 'Success') {
+        smsAccepted = true;
+      }
+    } else if (fast2smsKey) {
+      // ── Fast2SMS Integration ───────────────────────────────────────────────
+      const httpRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
         method: 'POST',
         headers: {
           'authorization':  fast2smsKey,
           'Content-Type':   'application/json',
         },
         body: JSON.stringify({
-          route:            'otp',
-          variables_values: otp,
+          route:            'q',
+          message:          `Your FoodRush verification OTP is ${otp}. Valid for 10 minutes. Do not share it with anyone.`,
+          language:         'english',
+          flash:            0,
           numbers:          cleanPhone,
         }),
       });
-      const fallbackData = await fallbackRes.json();
-      console.log(
-        `[FoodRush Auth] Fast2SMS OTP fallback HTTP ${fallbackRes.status} for ******${cleanPhone.slice(-4)}` +
-        ` | return: ${fallbackData?.return}` +
-        ` | status_code: ${fallbackData?.status_code}` +
-        ` | message: ${JSON.stringify(fallbackData?.message)}`
-      );
-      if (fallbackData?.return === true || fallbackData?.status_code === 200) {
+
+      const data = await httpRes.json();
+      providerLog = `Fast2SMS HTTP ${httpRes.status} | return: ${data?.return} | status_code: ${data?.status_code}`;
+      console.log(`[FoodRush Auth] ${providerLog} for ******${cleanPhone.slice(-4)}`);
+
+      if (data && (data.return === true || data.status_code === 200)) {
         smsAccepted = true;
-        smsResponse = fallbackData;
       }
     }
 
     if (!smsAccepted) {
-      // Fast2SMS rejected the request — clear the OTP so user can retry cleanly
+      // Provider rejected request — wipe OTP from DB so user can retry cleanly
       user.otp          = undefined;
       user.otpExpiresAt = undefined;
       await user.save({ validateBeforeSave: false });
 
-      console.error(
-        `[FoodRush Auth] Fast2SMS delivery failed for ******${cleanPhone.slice(-4)}:`,
-        { code: smsResponse?.status_code, msg: smsResponse?.message }
-      );
+      console.error(`[FoodRush Auth] SMS delivery failed for ******${cleanPhone.slice(-4)}: ${providerLog}`);
       throw new AppError(
         'SMS could not be delivered. Please verify the mobile number is active and try again.',
         502
@@ -303,11 +291,10 @@ const sendOTP = async (phone) => {
     }
   } catch (smsErr) {
     if (smsErr.isOperational) throw smsErr; // re-throw our own AppErrors
-    // Network error reaching Fast2SMS — clear OTP
     user.otp          = undefined;
     user.otpExpiresAt = undefined;
     await user.save({ validateBeforeSave: false });
-    console.error('[FoodRush Auth] Fast2SMS network error:', smsErr.message);
+    console.error('[FoodRush Auth] SMS provider network error:', smsErr.message);
     throw new AppError('SMS service is temporarily unavailable. Please try again shortly.', 503);
   }
 
