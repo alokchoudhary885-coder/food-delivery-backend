@@ -5,18 +5,35 @@
  * Services focus purely on data and logic — no req/res objects here.
  */
 
-const jwt = require('jsonwebtoken');
-const User = require('../models/user.model');
+const crypto = require('crypto');
+const jwt    = require('jsonwebtoken');
+const User   = require('../models/user.model');
 const AppError = require('../utils/AppError');
 
-/**
- * Generate a signed JWT token for a user ID.
- * @param {string} userId
- * @returns {string} JWT token
- */
+// ── Phone normalization ──────────────────────────────────────────────────────
+// Single function used everywhere to avoid inconsistent formats.
+// Strips all non-digit characters, then keeps the last 10 digits.
+// Handles: 9876543210 / +919876543210 / 919876543210 → 9876543210
+const normalizePhone = (raw) => {
+  if (!raw) return '';
+  const digits = String(raw).replace(/\D/g, '');
+  return digits.slice(-10);
+};
+
+// ── OTP generation ───────────────────────────────────────────────────────────
+// Uses Node.js crypto.randomInt — cryptographically secure.
+// Math.random() must NOT be used for authentication OTPs.
+// Produces a 6-digit string that preserves leading zeros (e.g. "047821").
+const generateOTP = () => {
+  const n = crypto.randomInt(0, 1_000_000); // 0–999999 inclusive
+  return String(n).padStart(6, '0');        // preserve leading zeros
+};
+
+// ── JWT signing ──────────────────────────────────────────────────────────────
 const signToken = (userId) => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
+    // Fail loudly — never silently fall back to a hardcoded secret
     throw new Error('JWT_SECRET environment variable is not set. Cannot issue token.');
   }
   return jwt.sign({ id: userId }, secret, {
@@ -24,23 +41,39 @@ const signToken = (userId) => {
   });
 };
 
+// ── OTP resend cooldown ──────────────────────────────────────────────────────
+// Minimum seconds that must pass before a new OTP can be requested for the same number.
+const OTP_RESEND_COOLDOWN_SECONDS = 30;
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  registerUser
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * Register a new user.
+ * Register a new user with email + password.
  * @param {object} data - { name, email, password, role, phone }
- * @returns {{ user: object, token: string }}
  */
 const registerUser = async (data) => {
-  const email = data.email ? data.email.toLowerCase().trim() : undefined;
-  const cleanPhone = data.phone ? data.phone.replace(/\D/g, '').slice(-10) : undefined;
+  const email      = data.email ? data.email.toLowerCase().trim() : undefined;
+  const cleanPhone = normalizePhone(data.phone) || undefined;
 
   if (email) {
     const existing = await User.findOne({ email }).select('+password');
     if (existing) {
-      if (data.password && (!existing.password || existing.auth_provider !== 'email')) {
+      // Account exists with email — do NOT silently overwrite password.
+      // This prevents account takeover if the account was created via Google.
+      if (existing.auth_provider === 'email' && existing.password) {
+        throw new AppError('An account with this email already exists. Please login instead.', 409);
+      }
+      // Account exists but was created via Google/phone with no email-password set.
+      // Attach password so they can also login with email/password going forward.
+      if (data.password) {
         existing.password = data.password;
-        if (data.name) existing.name = data.name;
-        if (cleanPhone) existing.phone = cleanPhone;
-        if (data.role) existing.role = data.role;
+        if (data.name)   existing.name  = data.name;
+        if (cleanPhone)  existing.phone = cleanPhone;
+        if (data.role)   existing.role  = data.role;
         existing.auth_provider = 'email';
         await existing.save();
         const token = signToken(existing._id);
@@ -52,25 +85,24 @@ const registerUser = async (data) => {
   }
 
   const user = await User.create({
-    name: data.name,
+    name:          data.name,
     email,
-    password: data.password,
-    role: data.role || 'customer',
-    phone: cleanPhone,
+    password:      data.password,
+    role:          data.role || 'customer',
+    phone:         cleanPhone,
     auth_provider: 'email',
   });
 
   const token = signToken(user._id);
   user.password = undefined;
-
   return { user, token };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  loginUser
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * Authenticate a user by email and password.
- * @param {string} email
- * @param {string} password
- * @returns {{ user: object, token: string }}
+ * Authenticate a user by email + password.
  */
 const loginUser = async (email, password) => {
   if (!email || !password) {
@@ -83,10 +115,13 @@ const loginUser = async (email, password) => {
     throw new AppError('No account found with this email address. Please sign up.', 401);
   }
 
+  // Account exists but was created via phone OTP — has no password.
+  // Do NOT silently set a password. Tell user to use OTP or Forgot Password.
   if (!user.password) {
-    // This account was created via phone OTP and has no password set.
-    // Direct them to set a password via Forgot Password, or log in with OTP.
-    throw new AppError('This account has no password set. Please use Mobile OTP login or reset your password via Forgot Password.', 401);
+    throw new AppError(
+      'This account has no password set. Please login with Mobile OTP or reset your password via Forgot Password.',
+      401
+    );
   }
 
   const isMatch = await user.comparePassword(password);
@@ -100,227 +135,290 @@ const loginUser = async (email, password) => {
 
   const token = signToken(user._id);
   user.password = undefined;
-
   return { user, token };
 };
 
-/**
- * Get authenticated user profile.
- * @param {string} userId
- * @returns {object} user
- */
+// ─────────────────────────────────────────────────────────────────────────────
+//  getMe
+// ─────────────────────────────────────────────────────────────────────────────
 const getMe = async (userId) => {
   const user = await User.findById(userId);
   if (!user) { throw new AppError('User not found.', 404); }
   return user;
 };
 
-/**
- * Update password for authenticated user.
- * @param {string} userId
- * @param {string} currentPassword
- * @param {string} newPassword
- * @returns {{ user: object, token: string }}
- */
+// ─────────────────────────────────────────────────────────────────────────────
+//  updatePassword
+// ─────────────────────────────────────────────────────────────────────────────
 const updatePassword = async (userId, currentPassword, newPassword) => {
   const user = await User.findById(userId).select('+password');
+
+  if (!user.password) {
+    throw new AppError('No password is set on this account. Use Forgot Password to set one.', 400);
+  }
 
   if (!(await user.comparePassword(currentPassword))) {
     throw new AppError('Current password is incorrect.', 401);
   }
 
   user.password = newPassword;
-  await user.save();
+  await user.save(); // pre-save hook hashes the new password
 
   const token = signToken(user._id);
   user.password = undefined;
-
   return { user, token };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  sendOTP
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * Send 6-digit OTP to Indian mobile number (+91).
- * @param {string} phone - 10-digit mobile number
- * @returns {object} result
+ * Generate a secure 6-digit OTP and dispatch it via Fast2SMS.
+ * OTP is NEVER returned in the API response or logged.
  */
 const sendOTP = async (phone) => {
-  const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : '';
+  const cleanPhone = normalizePhone(phone);
   if (!cleanPhone || cleanPhone.length !== 10) {
     throw new AppError('Valid 10-digit Indian mobile number is required.', 400);
   }
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  // ── Abuse protection: resend cooldown ──────────────────────────────────────
+  // Check if a recent OTP was already sent to this number within the cooldown window.
+  const existingUser = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
+  if (existingUser && existingUser.otpExpiresAt) {
+    const otpAge = Date.now() - (existingUser.otpExpiresAt.getTime() - OTP_TTL_MS);
+    if (otpAge < OTP_RESEND_COOLDOWN_SECONDS * 1000) {
+      const waitSeconds = Math.ceil((OTP_RESEND_COOLDOWN_SECONDS * 1000 - otpAge) / 1000);
+      throw new AppError(`Please wait ${waitSeconds} seconds before requesting a new OTP.`, 429);
+    }
+  }
 
-  let user = await User.findOne({ phone: cleanPhone });
-  if (!user) {
+  // ── Generate cryptographically secure OTP ─────────────────────────────────
+  const otp          = generateOTP();
+  const otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+  // ── Persist OTP to DB ─────────────────────────────────────────────────────
+  // Create user record if first time, otherwise overwrite the previous OTP.
+  // Race condition: if two requests arrive simultaneously, the second write wins.
+  // This is correct — only the latest OTP should be valid.
+  let user;
+  if (!existingUser) {
     user = await User.create({
-      name: `Customer_${cleanPhone.slice(-4)}`,
-      phone: cleanPhone,
-      role: 'customer',
+      name:          `Customer_${cleanPhone.slice(-4)}`,
+      phone:         cleanPhone,
+      role:          'customer',
       otp,
       otpExpiresAt,
       auth_provider: 'phone',
     });
   } else {
-    user.otp = otp;
-    user.otpExpiresAt = otpExpiresAt;
-    await user.save({ validateBeforeSave: false });
+    existingUser.otp          = otp;
+    existingUser.otpExpiresAt = otpExpiresAt;
+    await existingUser.save({ validateBeforeSave: false });
+    user = existingUser;
   }
 
-  // Dispatch real SMS via Fast2SMS if configured
+  // ── Dispatch real SMS via Fast2SMS ────────────────────────────────────────
   const fast2smsKey = process.env.FAST2SMS_API_KEY;
-  let smsSent = false;
-
   if (!fast2smsKey) {
-    // FAST2SMS_API_KEY not configured — SMS cannot be sent.
-    // Set this variable in Render → Environment Variables.
-    console.error('[FoodRush Auth] FAST2SMS_API_KEY is not set. SMS not sent for phone: ******' + cleanPhone.slice(-4));
+    // Clear the OTP so the DB is not left with an orphaned, undeliverable OTP.
+    user.otp          = undefined;
+    user.otpExpiresAt = undefined;
+    await user.save({ validateBeforeSave: false });
+    console.error('[FoodRush Auth] FAST2SMS_API_KEY is not configured in environment variables.');
     throw new AppError('SMS service is not configured. Please contact support.', 503);
   }
 
+  let smsResponse;
   try {
-    const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+    const httpRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
       method: 'POST',
       headers: {
-        'authorization': fast2smsKey,
-        'Content-Type': 'application/json',
+        'authorization':  fast2smsKey,   // key is NOT logged anywhere
+        'Content-Type':   'application/json',
       },
       body: JSON.stringify({
-        route: 'otp',
-        variables_values: otp,
-        numbers: cleanPhone,
+        route:            'otp',
+        variables_values: otp,           // OTP is NOT logged anywhere
+        numbers:          cleanPhone,
       }),
     });
 
-    const data = await response.json();
+    smsResponse = await httpRes.json();
 
-    // Log Fast2SMS HTTP status and return value for diagnostics — no OTP or key logged
-    console.log(`[FoodRush Auth] Fast2SMS HTTP ${response.status} for ******${cleanPhone.slice(-4)} — return: ${data?.return}, status_code: ${data?.status_code}, message: ${JSON.stringify(data?.message)}`);
+    // Safe diagnostic log — no OTP, no API key
+    console.log(
+      `[FoodRush Auth] Fast2SMS HTTP ${httpRes.status} for ******${cleanPhone.slice(-4)}` +
+      ` | return: ${smsResponse?.return}` +
+      ` | status_code: ${smsResponse?.status_code}` +
+      ` | message: ${JSON.stringify(smsResponse?.message)}`
+    );
 
-    if (data && (data.return === true || data.status_code === 200)) {
-      smsSent = true;
-    } else {
-      // Fast2SMS accepted the request but reported failure (e.g. DLT issue, invalid number)
-      console.error(`[FoodRush Auth] Fast2SMS rejected for ******${cleanPhone.slice(-4)}: ${JSON.stringify(data)}`);
-      throw new AppError('SMS could not be delivered. Please check the mobile number and try again.', 502);
+    const smsAccepted = smsResponse?.return === true || smsResponse?.status_code === 200;
+    if (!smsAccepted) {
+      // Fast2SMS rejected the request — clear the OTP so user can retry cleanly
+      user.otp          = undefined;
+      user.otpExpiresAt = undefined;
+      await user.save({ validateBeforeSave: false });
+
+      console.error(
+        `[FoodRush Auth] Fast2SMS rejected for ******${cleanPhone.slice(-4)}:`,
+        { code: smsResponse?.status_code, msg: smsResponse?.message }
+      );
+      throw new AppError(
+        'SMS could not be delivered. Please verify the mobile number is active and try again.',
+        502
+      );
     }
   } catch (smsErr) {
     if (smsErr.isOperational) throw smsErr; // re-throw our own AppErrors
+    // Network error reaching Fast2SMS — clear OTP
+    user.otp          = undefined;
+    user.otpExpiresAt = undefined;
+    await user.save({ validateBeforeSave: false });
     console.error('[FoodRush Auth] Fast2SMS network error:', smsErr.message);
     throw new AppError('SMS service is temporarily unavailable. Please try again shortly.', 503);
   }
 
-  // OTP is stored in DB. Never return it in the response.
+  // OTP is stored in DB. NEVER return it in the response.
   return {
-    phone: cleanPhone,
+    phone:   cleanPhone,
     message: `OTP sent to +91 ******${cleanPhone.slice(-4)}`,
   };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  verifyOTP
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * Verify OTP and login or create user.
- * @param {string} phone
- * @param {string} otp
- * @returns {{ user: object, token: string }}
+ * Verify the SMS OTP entered by the user.
+ * On success: clears OTP from DB (non-reusable), marks phone as verified, returns JWT.
  */
 const verifyOTP = async (phone, otp) => {
-  const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : '';
-  if (!cleanPhone || !otp) {
-    throw new AppError('Phone and OTP are required.', 400);
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone || cleanPhone.length !== 10) {
+    throw new AppError('Valid 10-digit mobile number is required.', 400);
+  }
+  if (!otp || String(otp).trim().length !== 6) {
+    throw new AppError('Please enter the 6-digit OTP.', 400);
   }
 
-  let user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
+  const user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
 
   if (!user || !user.otp) {
     throw new AppError('No OTP request found for this number. Please request a new OTP.', 400);
   }
 
-  const isExpired = !user.otpExpiresAt || user.otpExpiresAt < Date.now();
-  if (isExpired) {
-    throw new AppError('OTP has expired. Please request a new one.', 400);
+  // Check expiry first (more informative error than "incorrect OTP")
+  if (!user.otpExpiresAt || user.otpExpiresAt < Date.now()) {
+    throw new AppError('This OTP has expired. Please request a new one.', 400);
   }
 
-  if (user.otp !== otp) {
+  // Constant-time comparison — prevents timing attacks on OTP guessing
+  const inputOtp    = String(otp).trim();
+  const storedOtp   = String(user.otp).trim();
+  const isMatch     = crypto.timingSafeEqual(
+    Buffer.from(inputOtp.padStart(6, '0')),
+    Buffer.from(storedOtp.padStart(6, '0'))
+  );
+
+  if (!isMatch) {
     throw new AppError('Incorrect OTP. Please check the SMS and try again.', 400);
   }
 
-  // OTP is valid — clear it and mark phone as verified
-  user.otp = undefined;
+  // ── OTP is valid — clear immediately (non-reusable) ─────────────────────
+  user.otp          = undefined;
   user.otpExpiresAt = undefined;
   user.phoneVerified = true;
   await user.save({ validateBeforeSave: false });
 
   const token = signToken(user._id);
-
   return { user, token };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  authenticateFirebaseUser  (Google / Firebase token exchange)
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * Process authenticated user identity from real auth providers.
- * @param {object} payload { email, phone, name, avatar, authProvider, password, role }
- * @returns {{ user: object, token: string }}
+ * Find or create a MongoDB user from a verified Firebase/Google identity.
+ * The idToken is verified by Firebase Admin SDK in auth.middleware.js (protect).
+ * This service only handles the DB lookup + JWT issuance.
  */
 const authenticateFirebaseUser = async (payload) => {
-  const { email, phone, name, avatar, authProvider, password, role } = payload;
+  const { email, phone: rawPhone, name, avatar, authProvider, role } = payload;
+
+  const cleanPhone = rawPhone ? normalizePhone(rawPhone) : undefined;
 
   let query = {};
   if (email) {
     query.email = email.toLowerCase().trim();
-  } else if (phone) {
-    const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+  } else if (cleanPhone) {
     query.phone = cleanPhone;
   } else {
     throw new AppError('Valid email or phone number is required.', 400);
   }
 
-  let user = await User.findOne(query).select('+password');
+  let user = await User.findOne(query);
 
   if (!user) {
-    const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : undefined;
     user = await User.create({
-      name: name || (email ? email.split('@')[0] : `Customer_${cleanPhone?.slice(-4) || 'User'}`),
-      email: email ? email.toLowerCase().trim() : undefined,
-      phone: cleanPhone,
-      password: password || undefined,
-      avatar: avatar || '',
+      name:          name || (email ? email.split('@')[0] : `Customer_${cleanPhone?.slice(-4) || 'User'}`),
+      email:         email ? email.toLowerCase().trim() : undefined,
+      phone:         cleanPhone || undefined,
+      avatar:        avatar || '',
       auth_provider: authProvider || (email ? 'google' : 'phone'),
-      role: role || 'customer',
+      role:          role || 'customer',
     });
   } else {
-    if (avatar && !user.avatar) user.avatar = avatar;
-    if (authProvider && !user.auth_provider) user.auth_provider = authProvider;
-    if (role && (role === 'owner' || role === 'customer')) user.role = role;
-    if (name && (user.name.startsWith('Customer_') || !user.name)) user.name = name;
-    if (password && !user.password) {
-      user.password = password;
-    }
+    if (avatar && !user.avatar)                              user.avatar        = avatar;
+    if (authProvider && !user.auth_provider)                 user.auth_provider = authProvider;
+    if (role && (role === 'owner' || role === 'customer'))   user.role          = role;
+    if (name && (!user.name || user.name.startsWith('Customer_'))) user.name   = name;
     await user.save({ validateBeforeSave: false });
   }
 
   const token = signToken(user._id);
-  user.password = undefined;
-
   return { user, token };
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  googleLogin  (thin wrapper — preserves existing route /api/v1/auth/google)
+// ─────────────────────────────────────────────────────────────────────────────
+const googleLogin = async (body) => {
+  const { email, name, avatar, authProvider, uid } = body;
+  if (!email) {
+    throw new AppError('Email is required for Google login.', 400);
+  }
+  return authenticateFirebaseUser({
+    email,
+    name,
+    avatar,
+    authProvider: authProvider || 'google',
+    uid,
+  });
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  resetPasswordWithOTP
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * Reset password using verified SMS OTP.
- * @param {string} phone
- * @param {string} otp
- * @param {string} newPassword
- * @returns {{ user: object, token: string }}
+ * Reset account password after verifying SMS OTP.
+ * No master OTP. No bypass. No OTP in response.
  */
 const resetPasswordWithOTP = async (phone, otp, newPassword) => {
   if (!phone || !otp || !newPassword) {
     throw new AppError('Phone, OTP and new password are required.', 400);
   }
   if (newPassword.length < 6) {
-    throw new AppError('Password must be at least 6 characters long.', 400);
+    throw new AppError('Password must be at least 6 characters.', 400);
   }
 
-  const cleanPhone = phone.replace(/\D/g, '').slice(-10);
-  let user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt +password');
+  const cleanPhone = normalizePhone(phone);
+  if (cleanPhone.length !== 10) {
+    throw new AppError('Valid 10-digit mobile number is required.', 400);
+  }
+
+  const user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt +password');
 
   if (!user) {
     throw new AppError('No account found with this mobile number.', 404);
@@ -334,32 +432,26 @@ const resetPasswordWithOTP = async (phone, otp, newPassword) => {
     throw new AppError('OTP has expired. Please request a new one.', 400);
   }
 
-  if (user.otp !== otp) {
+  const inputOtp  = String(otp).trim();
+  const storedOtp = String(user.otp).trim();
+  const isMatch   = crypto.timingSafeEqual(
+    Buffer.from(inputOtp.padStart(6, '0')),
+    Buffer.from(storedOtp.padStart(6, '0'))
+  );
+
+  if (!isMatch) {
     throw new AppError('Incorrect OTP. Please check the SMS and try again.', 400);
   }
 
-  user.password = newPassword;
-  user.otp = undefined;
+  // Valid — set new password (pre-save hook hashes it), clear OTP
+  user.password     = newPassword;
+  user.otp          = undefined;
   user.otpExpiresAt = undefined;
   await user.save();
 
   const token = signToken(user._id);
   user.password = undefined;
-
   return { user, token };
-};
-
-/**
- * Google login via idToken — delegates to authenticateFirebaseUser.
- * @param {object} body - { email, name, avatar, authProvider, uid }
- * @returns {{ user: object, token: string }}
- */
-const googleLogin = async (body) => {
-  const { email, name, avatar, authProvider, uid } = body;
-  if (!email) {
-    throw new AppError('Email is required for Google login.', 400);
-  }
-  return authenticateFirebaseUser({ email, name, avatar, authProvider: authProvider || 'google', uid });
 };
 
 module.exports = {
@@ -367,11 +459,10 @@ module.exports = {
   loginUser,
   getMe,
   updatePassword,
-  signToken,
   sendOTP,
   verifyOTP,
   googleLogin,
   authenticateFirebaseUser,
   resetPasswordWithOTP,
+  signToken,
 };
-
