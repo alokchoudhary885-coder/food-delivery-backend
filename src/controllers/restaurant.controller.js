@@ -73,6 +73,15 @@ const updateRestaurant = catchAsync(async (req, res) => {
 });
 
 /**
+ * DELETE /api/v1/restaurants/:id
+ * @access Private (admin)
+ */
+const deleteRestaurant = catchAsync(async (req, res) => {
+  const restaurant = await restaurantService.deleteRestaurant(req.params.id);
+  sendSuccess(res, StatusCodes.OK, 'Restaurant deleted successfully.', { restaurant });
+});
+
+/**
  * POST /api/v1/restaurants/seed
  * Seed top-rated restaurants & menus
  * @access Public / Dev
