@@ -75,7 +75,10 @@ const protect = catchAsync(async (req, _res, next) => {
   if (!currentUser) {
     let decoded;
     try {
-      const secret = process.env.JWT_SECRET || 'foodrush_jwt_secret_key_production_2026';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        return next(new AppError('Server configuration error. Please contact support.', 500));
+      }
       decoded = jwt.verify(token, secret);
       currentUser = await User.findById(decoded.id);
     } catch (err) {

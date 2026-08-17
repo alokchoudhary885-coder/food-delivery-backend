@@ -77,5 +77,11 @@ const resetPassword = catchAsync(async (req, res) => {
   sendSuccess(res, StatusCodes.OK, 'Password has been reset successfully. Logged in!', { user, token });
 });
 
+const firebaseLogin = catchAsync(async (req, res) => {
+  const { user, token } = await authService.authenticateFirebaseUser(req.body);
+  sendSuccess(res, StatusCodes.OK, 'Logged in successfully.', { user, token });
+});
+
 module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP, googleLogin, firebaseLogin, resetPassword };
+
 

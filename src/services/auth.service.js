@@ -15,7 +15,10 @@ const AppError = require('../utils/AppError');
  * @returns {string} JWT token
  */
 const signToken = (userId) => {
-  const secret = process.env.JWT_SECRET || 'foodrush_jwt_secret_key_production_2026';
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is not set. Cannot issue token.');
+  }
   return jwt.sign({ id: userId }, secret, {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   });
@@ -81,14 +84,14 @@ const loginUser = async (email, password) => {
   }
 
   if (!user.password) {
-    // Auto-set password if user signed up previously without password
-    user.password = password;
-    await user.save();
-  } else {
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      throw new AppError('Incorrect password. Please try again or reset your password.', 401);
-    }
+    // This account was created via phone OTP and has no password set.
+    // Direct them to set a password via Forgot Password, or log in with OTP.
+    throw new AppError('This account has no password set. Please use Mobile OTP login or reset your password via Forgot Password.', 401);
+  }
+
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) {
+    throw new AppError('Incorrect password. Please try again or use Forgot Password.', 401);
   }
 
   if (!user.isActive) {
@@ -168,36 +171,50 @@ const sendOTP = async (phone) => {
   // Dispatch real SMS via Fast2SMS if configured
   const fast2smsKey = process.env.FAST2SMS_API_KEY;
   let smsSent = false;
-  if (fast2smsKey) {
-    try {
-      const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-        method: 'POST',
-        headers: {
-          'authorization': fast2smsKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          route: 'otp',
-          variables_values: otp,
-          numbers: cleanPhone,
-        }),
-      });
-      const data = await response.json();
-      console.log(`📲 Fast2SMS real SMS dispatched to +91 ${cleanPhone}:`, data);
-      if (data && (data.return === true || data.status_code === 200)) {
-        smsSent = true;
-      }
-    } catch (smsErr) {
-      console.error('⚠️ Fast2SMS dispatch error:', smsErr.message);
-    }
+
+  if (!fast2smsKey) {
+    // FAST2SMS_API_KEY not configured — SMS cannot be sent.
+    // Set this variable in Render → Environment Variables.
+    console.error('[FoodRush Auth] FAST2SMS_API_KEY is not set. SMS not sent for phone: ******' + cleanPhone.slice(-4));
+    throw new AppError('SMS service is not configured. Please contact support.', 503);
   }
 
-  console.log(`ℹ️ [FoodRush OTP] +91 ${cleanPhone}: ${otp} (Master: 123456)`);
+  try {
+    const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+      method: 'POST',
+      headers: {
+        'authorization': fast2smsKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        route: 'otp',
+        variables_values: otp,
+        numbers: cleanPhone,
+      }),
+    });
 
+    const data = await response.json();
+
+    // Log Fast2SMS HTTP status and return value for diagnostics — no OTP or key logged
+    console.log(`[FoodRush Auth] Fast2SMS HTTP ${response.status} for ******${cleanPhone.slice(-4)} — return: ${data?.return}, status_code: ${data?.status_code}, message: ${JSON.stringify(data?.message)}`);
+
+    if (data && (data.return === true || data.status_code === 200)) {
+      smsSent = true;
+    } else {
+      // Fast2SMS accepted the request but reported failure (e.g. DLT issue, invalid number)
+      console.error(`[FoodRush Auth] Fast2SMS rejected for ******${cleanPhone.slice(-4)}: ${JSON.stringify(data)}`);
+      throw new AppError('SMS could not be delivered. Please check the mobile number and try again.', 502);
+    }
+  } catch (smsErr) {
+    if (smsErr.isOperational) throw smsErr; // re-throw our own AppErrors
+    console.error('[FoodRush Auth] Fast2SMS network error:', smsErr.message);
+    throw new AppError('SMS service is temporarily unavailable. Please try again shortly.', 503);
+  }
+
+  // OTP is stored in DB. Never return it in the response.
   return {
     phone: cleanPhone,
-    message: smsSent ? 'Real SMS OTP sent to your phone' : 'OTP generated successfully',
-    otpPreview: (!smsSent) ? otp : undefined,
+    message: `OTP sent to +91 ******${cleanPhone.slice(-4)}`,
   };
 };
 
@@ -215,27 +232,24 @@ const verifyOTP = async (phone, otp) => {
 
   let user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
 
-  const isMasterOTP = otp === '123456';
-  const isGeneratedValid = user && user.otp && user.otp === otp && user.otpExpiresAt && user.otpExpiresAt > Date.now();
-
-  if (!isMasterOTP && !isGeneratedValid) {
-    throw new AppError('Invalid or expired OTP. Please enter the correct OTP.', 400);
+  if (!user || !user.otp) {
+    throw new AppError('No OTP request found for this number. Please request a new OTP.', 400);
   }
 
-  if (!user) {
-    user = await User.create({
-      name: `Customer_${cleanPhone.slice(-4)}`,
-      phone: cleanPhone,
-      role: 'customer',
-      phoneVerified: true,
-      auth_provider: 'phone',
-    });
-  } else {
-    user.otp = undefined;
-    user.otpExpiresAt = undefined;
-    user.phoneVerified = true;
-    await user.save({ validateBeforeSave: false });
+  const isExpired = !user.otpExpiresAt || user.otpExpiresAt < Date.now();
+  if (isExpired) {
+    throw new AppError('OTP has expired. Please request a new one.', 400);
   }
+
+  if (user.otp !== otp) {
+    throw new AppError('Incorrect OTP. Please check the SMS and try again.', 400);
+  }
+
+  // OTP is valid — clear it and mark phone as verified
+  user.otp = undefined;
+  user.otpExpiresAt = undefined;
+  user.phoneVerified = true;
+  await user.save({ validateBeforeSave: false });
 
   const token = signToken(user._id);
 
@@ -312,11 +326,16 @@ const resetPasswordWithOTP = async (phone, otp, newPassword) => {
     throw new AppError('No account found with this mobile number.', 404);
   }
 
-  const isMasterOTP = otp === '123456';
-  const isGeneratedValid = user.otp && user.otp === otp && user.otpExpiresAt && user.otpExpiresAt > Date.now();
+  if (!user.otp) {
+    throw new AppError('No OTP request found for this number. Please request a new OTP.', 400);
+  }
 
-  if (!isMasterOTP && !isGeneratedValid) {
-    throw new AppError('Invalid or expired OTP. Please try again.', 400);
+  if (!user.otpExpiresAt || user.otpExpiresAt < Date.now()) {
+    throw new AppError('OTP has expired. Please request a new one.', 400);
+  }
+
+  if (user.otp !== otp) {
+    throw new AppError('Incorrect OTP. Please check the SMS and try again.', 400);
   }
 
   user.password = newPassword;
@@ -328,6 +347,19 @@ const resetPasswordWithOTP = async (phone, otp, newPassword) => {
   user.password = undefined;
 
   return { user, token };
+};
+
+/**
+ * Google login via idToken — delegates to authenticateFirebaseUser.
+ * @param {object} body - { email, name, avatar, authProvider, uid }
+ * @returns {{ user: object, token: string }}
+ */
+const googleLogin = async (body) => {
+  const { email, name, avatar, authProvider, uid } = body;
+  if (!email) {
+    throw new AppError('Email is required for Google login.', 400);
+  }
+  return authenticateFirebaseUser({ email, name, avatar, authProvider: authProvider || 'google', uid });
 };
 
 module.exports = {
