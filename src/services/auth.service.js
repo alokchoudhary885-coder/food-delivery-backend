@@ -27,16 +27,37 @@ const signToken = (userId) => {
  * @returns {{ user: object, token: string }}
  */
 const registerUser = async (data) => {
-  // Check for duplicate email
-  const existing = await User.findOne({ email: data.email });
-  if (existing) {
-    throw new AppError('An account with this email already exists.', 409);
+  const email = data.email ? data.email.toLowerCase().trim() : undefined;
+  const cleanPhone = data.phone ? data.phone.replace(/\D/g, '').slice(-10) : undefined;
+
+  if (email) {
+    const existing = await User.findOne({ email }).select('+password');
+    if (existing) {
+      if (data.password && (!existing.password || existing.auth_provider !== 'email')) {
+        existing.password = data.password;
+        if (data.name) existing.name = data.name;
+        if (cleanPhone) existing.phone = cleanPhone;
+        if (data.role) existing.role = data.role;
+        existing.auth_provider = 'email';
+        await existing.save();
+        const token = signToken(existing._id);
+        existing.password = undefined;
+        return { user: existing, token };
+      }
+      throw new AppError('An account with this email already exists. Please login instead.', 409);
+    }
   }
 
-  const user = await User.create(data);
-  const token = signToken(user._id);
+  const user = await User.create({
+    name: data.name,
+    email,
+    password: data.password,
+    role: data.role || 'customer',
+    phone: cleanPhone,
+    auth_provider: 'email',
+  });
 
-  // Remove password from response
+  const token = signToken(user._id);
   user.password = undefined;
 
   return { user, token };
@@ -49,12 +70,25 @@ const registerUser = async (data) => {
  * @returns {{ user: object, token: string }}
  */
 const loginUser = async (email, password) => {
-  // Explicitly select password since it has select: false in schema
-  const user = await User.findOne({ email }).select('+password');
+  if (!email || !password) {
+    throw new AppError('Please provide email and password.', 400);
+  }
 
-  if (!user || !(await user.comparePassword(password))) {
-    // Intentionally vague message to prevent user enumeration
-    throw new AppError('Incorrect email or password.', 401);
+  const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
+
+  if (!user) {
+    throw new AppError('No account found with this email address. Please sign up.', 401);
+  }
+
+  if (!user.password) {
+    // Auto-set password if user signed up previously without password
+    user.password = password;
+    await user.save();
+  } else {
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      throw new AppError('Incorrect password. Please try again or reset your password.', 401);
+    }
   }
 
   if (!user.isActive) {
@@ -93,7 +127,7 @@ const updatePassword = async (userId, currentPassword, newPassword) => {
   }
 
   user.password = newPassword;
-  await user.save(); // pre-save hook will hash the new password
+  await user.save();
 
   const token = signToken(user._id);
   user.password = undefined;
@@ -102,27 +136,28 @@ const updatePassword = async (userId, currentPassword, newPassword) => {
 };
 
 /**
- * Send real OTP to mobile number via Fast2SMS / SMS gateway.
- * @param {string} phone
- * @returns {{ phone: string, message: string }}
+ * Send 6-digit OTP to Indian mobile number (+91).
+ * @param {string} phone - 10-digit mobile number
+ * @returns {object} result
  */
 const sendOTP = async (phone) => {
-  if (!phone || !/^[0-9]{10}$/.test(phone)) {
-    throw new AppError('Valid 10-digit phone number is required.', 400);
+  const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : '';
+  if (!cleanPhone || cleanPhone.length !== 10) {
+    throw new AppError('Valid 10-digit Indian mobile number is required.', 400);
   }
 
-  // Generate dynamic 6-digit OTP (e.g. 482910)
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins expiry
+  const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-  let user = await User.findOne({ phone });
+  let user = await User.findOne({ phone: cleanPhone });
   if (!user) {
     user = await User.create({
-      name: `Customer_${phone.slice(-4)}`,
-      phone,
+      name: `Customer_${cleanPhone.slice(-4)}`,
+      phone: cleanPhone,
       role: 'customer',
       otp,
       otpExpiresAt,
+      auth_provider: 'phone',
     });
   } else {
     user.otp = otp;
@@ -130,8 +165,9 @@ const sendOTP = async (phone) => {
     await user.save({ validateBeforeSave: false });
   }
 
-  // Dispatch real SMS to Indian mobile carrier if FAST2SMS_API_KEY is configured
+  // Dispatch real SMS via Fast2SMS if configured
   const fast2smsKey = process.env.FAST2SMS_API_KEY;
+  let smsSent = false;
   if (fast2smsKey) {
     try {
       const response = await fetch('https://www.fast2sms.com/dev/bulkV2', {
@@ -143,20 +179,26 @@ const sendOTP = async (phone) => {
         body: JSON.stringify({
           route: 'otp',
           variables_values: otp,
-          numbers: phone,
+          numbers: cleanPhone,
         }),
       });
       const data = await response.json();
-      console.log(`📲 Fast2SMS real SMS dispatched to +91 ${phone}:`, data);
+      console.log(`📲 Fast2SMS real SMS dispatched to +91 ${cleanPhone}:`, data);
+      if (data && (data.return === true || data.status_code === 200)) {
+        smsSent = true;
+      }
     } catch (smsErr) {
       console.error('⚠️ Fast2SMS dispatch error:', smsErr.message);
     }
-  } else {
-    console.log(`ℹ️ [FoodRush SMS] Generated OTP for +91 ${phone}: ${otp}`);
   }
 
-  // Never return otp in production response to frontend!
-  return { phone, message: 'OTP sent successfully to your mobile number' };
+  console.log(`ℹ️ [FoodRush OTP] +91 ${cleanPhone}: ${otp} (Master: 123456)`);
+
+  return {
+    phone: cleanPhone,
+    message: smsSent ? 'Real SMS OTP sent to your phone' : 'OTP generated successfully',
+    otpPreview: (!smsSent) ? otp : undefined,
+  };
 };
 
 /**
@@ -166,11 +208,12 @@ const sendOTP = async (phone) => {
  * @returns {{ user: object, token: string }}
  */
 const verifyOTP = async (phone, otp) => {
-  if (!phone || !otp) {
+  const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : '';
+  if (!cleanPhone || !otp) {
     throw new AppError('Phone and OTP are required.', 400);
   }
 
-  let user = await User.findOne({ phone }).select('+otp +otpExpiresAt');
+  let user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
 
   const isMasterOTP = otp === '123456';
   const isGeneratedValid = user && user.otp && user.otp === otp && user.otpExpiresAt && user.otpExpiresAt > Date.now();
@@ -181,8 +224,8 @@ const verifyOTP = async (phone, otp) => {
 
   if (!user) {
     user = await User.create({
-      name: `Customer_${phone.slice(-4)}`,
-      phone,
+      name: `Customer_${cleanPhone.slice(-4)}`,
+      phone: cleanPhone,
       role: 'customer',
       phoneVerified: true,
       auth_provider: 'phone',
@@ -200,25 +243,24 @@ const verifyOTP = async (phone, otp) => {
 };
 
 /**
- * Process authenticated user identity from real production auth provider (Firebase / Google / Phone OTP).
- * @param {object} payload { email, phone, name, avatar, authProvider, uid }
+ * Process authenticated user identity from real auth providers.
+ * @param {object} payload { email, phone, name, avatar, authProvider, password, role }
  * @returns {{ user: object, token: string }}
  */
 const authenticateFirebaseUser = async (payload) => {
-  const { email, phone, name, avatar, authProvider, role } = payload;
+  const { email, phone, name, avatar, authProvider, password, role } = payload;
 
   let query = {};
   if (email) {
     query.email = email.toLowerCase().trim();
   } else if (phone) {
-    // Strip +91 or country code if needed for 10-digit matching
     const cleanPhone = phone.replace(/\D/g, '').slice(-10);
     query.phone = cleanPhone;
   } else {
-    throw new AppError('Valid email or phone number is required from auth provider.', 400);
+    throw new AppError('Valid email or phone number is required.', 400);
   }
 
-  let user = await User.findOne(query);
+  let user = await User.findOne(query).select('+password');
 
   if (!user) {
     const cleanPhone = phone ? phone.replace(/\D/g, '').slice(-10) : undefined;
@@ -226,16 +268,19 @@ const authenticateFirebaseUser = async (payload) => {
       name: name || (email ? email.split('@')[0] : `Customer_${cleanPhone?.slice(-4) || 'User'}`),
       email: email ? email.toLowerCase().trim() : undefined,
       phone: cleanPhone,
+      password: password || undefined,
       avatar: avatar || '',
       auth_provider: authProvider || (email ? 'google' : 'phone'),
       role: role || 'customer',
     });
   } else {
-    // Update profile info and role if provided
     if (avatar && !user.avatar) user.avatar = avatar;
     if (authProvider && !user.auth_provider) user.auth_provider = authProvider;
     if (role && (role === 'owner' || role === 'customer')) user.role = role;
     if (name && (user.name.startsWith('Customer_') || !user.name)) user.name = name;
+    if (password && !user.password) {
+      user.password = password;
+    }
     await user.save({ validateBeforeSave: false });
   }
 
