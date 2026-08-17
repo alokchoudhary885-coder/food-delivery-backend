@@ -231,15 +231,18 @@ const sendOTP = async (phone) => {
 
   let smsResponse;
   try {
-    const httpRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+    // 1. Dispatch via Fast2SMS Quick SMS (route: 'q') — works immediately with wallet balance without requiring website/DLT verification
+    let httpRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
       method: 'POST',
       headers: {
         'authorization':  fast2smsKey,   // key is NOT logged anywhere
         'Content-Type':   'application/json',
       },
       body: JSON.stringify({
-        route:            'otp',
-        variables_values: otp,           // OTP is NOT logged anywhere
+        route:            'q',
+        message:          `Your FoodRush verification OTP is ${otp}. Valid for 10 minutes. Do not share it with anyone.`,
+        language:         'english',
+        flash:            0,
         numbers:          cleanPhone,
       }),
     });
@@ -248,13 +251,41 @@ const sendOTP = async (phone) => {
 
     // Safe diagnostic log — no OTP, no API key
     console.log(
-      `[FoodRush Auth] Fast2SMS HTTP ${httpRes.status} for ******${cleanPhone.slice(-4)}` +
+      `[FoodRush Auth] Fast2SMS Quick SMS HTTP ${httpRes.status} for ******${cleanPhone.slice(-4)}` +
       ` | return: ${smsResponse?.return}` +
       ` | status_code: ${smsResponse?.status_code}` +
       ` | message: ${JSON.stringify(smsResponse?.message)}`
     );
 
-    const smsAccepted = smsResponse?.return === true || smsResponse?.status_code === 200;
+    let smsAccepted = smsResponse?.return === true || smsResponse?.status_code === 200;
+
+    // Fallback: If route 'q' fails with a specific route error, attempt route 'otp'
+    if (!smsAccepted) {
+      const fallbackRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+        method: 'POST',
+        headers: {
+          'authorization':  fast2smsKey,
+          'Content-Type':   'application/json',
+        },
+        body: JSON.stringify({
+          route:            'otp',
+          variables_values: otp,
+          numbers:          cleanPhone,
+        }),
+      });
+      const fallbackData = await fallbackRes.json();
+      console.log(
+        `[FoodRush Auth] Fast2SMS OTP fallback HTTP ${fallbackRes.status} for ******${cleanPhone.slice(-4)}` +
+        ` | return: ${fallbackData?.return}` +
+        ` | status_code: ${fallbackData?.status_code}` +
+        ` | message: ${JSON.stringify(fallbackData?.message)}`
+      );
+      if (fallbackData?.return === true || fallbackData?.status_code === 200) {
+        smsAccepted = true;
+        smsResponse = fallbackData;
+      }
+    }
+
     if (!smsAccepted) {
       // Fast2SMS rejected the request — clear the OTP so user can retry cleanly
       user.otp          = undefined;
@@ -262,7 +293,7 @@ const sendOTP = async (phone) => {
       await user.save({ validateBeforeSave: false });
 
       console.error(
-        `[FoodRush Auth] Fast2SMS rejected for ******${cleanPhone.slice(-4)}:`,
+        `[FoodRush Auth] Fast2SMS delivery failed for ******${cleanPhone.slice(-4)}:`,
         { code: smsResponse?.status_code, msg: smsResponse?.message }
       );
       throw new AppError(
