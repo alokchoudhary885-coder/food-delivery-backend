@@ -86,16 +86,21 @@ const globalErrorHandler = (err, req, res, next) => {
   if (process.env.NODE_ENV === 'development') {
     sendErrorDev(err, res);
   } else {
-    // Clone the error (don't mutate the original)
-    let error = Object.assign(Object.create(Object.getPrototypeOf(err)), err);
-    error.message = err.message;
+    let error = err;
 
-    // Transform known error types into operational AppErrors
-    if (error.name === 'CastError')           { error = handleCastError(error); }
-    if (error.code === 11000)                  { error = handleDuplicateKeyError(error); }
-    if (error.name === 'ValidationError')      { error = handleValidationError(error); }
-    if (error.name === 'JsonWebTokenError')    { error = handleJWTError(); }
-    if (error.name === 'TokenExpiredError')    { error = handleJWTExpiredError(); }
+    // Transform known DB/JWT errors into operational AppErrors
+    if (err.name === 'CastError')        error = handleCastError(err);
+    if (err.code === 11000)             error = handleDuplicateKeyError(err);
+    if (err.name === 'ValidationError') error = handleValidationError(err);
+    if (err.name === 'JsonWebTokenError') error = handleJWTError();
+    if (err.name === 'TokenExpiredError') error = handleJWTExpiredError();
+
+    // If it's an AppError (isOperational), preserve its status code and message
+    if (err.isOperational && !error.isOperational) {
+      error.isOperational = true;
+      error.statusCode = err.statusCode;
+      error.message = err.message;
+    }
 
     sendErrorProd(error, res);
   }
