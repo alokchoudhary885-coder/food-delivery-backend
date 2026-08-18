@@ -209,13 +209,11 @@ const sendOTP = async (phone) => {
   const otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
 
   // ── Persist OTP to DB ─────────────────────────────────────────────────────
-  // Create user record if first time, otherwise overwrite the previous OTP.
-  // Race condition: if two requests arrive simultaneously, the second write wins.
-  // This is correct — only the latest OTP should be valid.
   let user;
   if (!existingUser) {
     user = await User.create({
       name:          `Customer_${cleanPhone.slice(-4)}`,
+      email:         `${cleanPhone}@phone.foodrush.app`,
       phone:         cleanPhone,
       role:          'customer',
       otp,
@@ -314,6 +312,7 @@ const verifyOTP = async (phone, otp) => {
   if (!user) {
     user = await User.create({
       name:          `Customer_${cleanPhone.slice(-4)}`,
+      email:         `${cleanPhone}@phone.foodrush.app`,
       phone:         cleanPhone,
       role:          'customer',
       phoneVerified: true,
@@ -357,7 +356,7 @@ const authenticateFirebaseUser = async (payload) => {
   if (!user) {
     user = await User.create({
       name:          name || (email ? email.split('@')[0] : `Customer_${cleanPhone?.slice(-4) || 'User'}`),
-      email:         email ? email.toLowerCase().trim() : undefined,
+      email:         email ? email.toLowerCase().trim() : (cleanPhone ? `${cleanPhone}@phone.foodrush.app` : undefined),
       phone:         cleanPhone || undefined,
       avatar:        avatar || '',
       auth_provider: authProvider || (email ? 'google' : 'phone'),
