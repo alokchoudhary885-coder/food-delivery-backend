@@ -19,6 +19,7 @@ const router = express.Router();
 router.post('/register', validate(registerSchema), authController.register);
 router.post('/login',    validate(loginSchema),    authController.login);
 router.post('/send-otp',   authController.sendOTP);
+router.post('/send-email-otp', authController.sendEmailOTP);
 router.post('/verify-otp', authController.verifyOTP);
 router.post('/reset-password', authController.resetPassword);
 router.post('/google',     authController.googleLogin);

@@ -102,24 +102,35 @@ const registerUser = async (data) => {
 //  loginUser
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Authenticate a user by email + password.
+ * Authenticate a user by identifier (10-digit Phone OR Email) + password.
+ * Works instantly on both Web and Mobile/Android without external SMS dependencies.
  */
-const loginUser = async (email, password) => {
-  if (!email || !password) {
-    throw new AppError('Please provide email and password.', 400);
+const loginUser = async (identifier, password) => {
+  if (!identifier || !password) {
+    throw new AppError('Please provide your mobile number or email, and password.', 400);
   }
 
-  const user = await User.findOne({ email: email.toLowerCase().trim() }).select('+password');
+  const raw = String(identifier).trim();
+  const digitsOnly = raw.replace(/\D/g, '');
+  const isPhone = digitsOnly.length === 10 && !raw.includes('@');
+  const cleanPhone = isPhone ? digitsOnly.slice(-10) : null;
+
+  const query = isPhone ? { phone: cleanPhone } : { email: raw.toLowerCase() };
+  const user = await User.findOne(query).select('+password');
 
   if (!user) {
-    throw new AppError('No account found with this email address. Please sign up.', 401);
+    throw new AppError(
+      isPhone
+        ? 'No account found with this mobile number. Please check the number or sign up.'
+        : 'No account found with this email address. Please check the email or sign up.',
+      401
+    );
   }
 
-  // Account exists but was created via phone OTP — has no password.
-  // Do NOT silently set a password. Tell user to use OTP or Forgot Password.
+  // Account exists but was created without password
   if (!user.password) {
     throw new AppError(
-      'This account has no password set. Please login with Mobile OTP or reset your password via Forgot Password.',
+      'This account has no password set yet. Please use Forgot Password to create a password.',
       401
     );
   }
@@ -417,33 +428,83 @@ const googleLogin = async (body) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  sendEmailOTP (Nodemailer Gmail SMTP — 100% Free & Reliable)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Send real 6-digit verification code to user's email inbox.
+ * Zero DLT, zero third-party blocking.
+ * @param {string} email
+ */
+const sendEmailOTP = async (email) => {
+  if (!email || !email.includes('@')) {
+    throw new AppError('Please provide a valid email address.', 400);
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  let user = await User.findOne({ email: cleanEmail });
+  if (!user) {
+    throw new AppError('No account found with this email address. Please sign up first.', 404);
+  }
+
+  // Abuse protection: 30s resend cooldown
+  if (user.otpExpiresAt) {
+    const otpAge = Date.now() - (user.otpExpiresAt.getTime() - OTP_TTL_MS);
+    if (otpAge < OTP_RESEND_COOLDOWN_SECONDS * 1000) {
+      const waitSeconds = Math.ceil((OTP_RESEND_COOLDOWN_SECONDS * 1000 - otpAge) / 1000);
+      throw new AppError(`Please wait ${waitSeconds} seconds before requesting a new OTP.`, 429);
+    }
+  }
+
+  const otp = generateOTP();
+  const otpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+  user.otp = otp;
+  user.otpExpiresAt = otpExpiresAt;
+  await user.save({ validateBeforeSave: false });
+
+  const { sendOTPEmail } = require('../utils/email');
+  await sendOTPEmail(cleanEmail, otp, user.name || 'FoodRush User');
+
+  return {
+    email: cleanEmail,
+    message: `Verification code sent to ${cleanEmail.split('@')[0]}***@${cleanEmail.split('@')[1]}`,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  resetPasswordWithOTP
 // ─────────────────────────────────────────────────────────────────────────────
 /**
- * Reset account password after verifying SMS OTP.
+ * Reset account password after verifying 6-digit OTP (via Phone SMS or Email).
  * No master OTP. No bypass. No OTP in response.
  */
-const resetPasswordWithOTP = async (phone, otp, newPassword) => {
-  if (!phone || !otp || !newPassword) {
-    throw new AppError('Phone, OTP and new password are required.', 400);
+const resetPasswordWithOTP = async (identifier, otp, newPassword) => {
+  if (!identifier || !otp || !newPassword) {
+    throw new AppError('Mobile/Email, OTP and new password are required.', 400);
   }
   if (newPassword.length < 6) {
-    throw new AppError('Password must be at least 6 characters.', 400);
+    throw new AppError('Password must be at least 6 characters long.', 400);
   }
 
-  const cleanPhone = normalizePhone(phone);
-  if (cleanPhone.length !== 10) {
-    throw new AppError('Valid 10-digit mobile number is required.', 400);
-  }
+  const raw = String(identifier).trim();
+  const digitsOnly = raw.replace(/\D/g, '');
+  const isPhone = digitsOnly.length === 10 && !raw.includes('@');
+  const cleanPhone = isPhone ? digitsOnly.slice(-10) : null;
 
-  const user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt +password');
+  const query = isPhone ? { phone: cleanPhone } : { email: raw.toLowerCase() };
+  const user = await User.findOne(query).select('+otp +otpExpiresAt +password');
 
   if (!user) {
-    throw new AppError('No account found with this mobile number.', 404);
+    throw new AppError(
+      isPhone
+        ? 'No account found with this mobile number.'
+        : 'No account found with this email address.',
+      404
+    );
   }
 
   if (!user.otp) {
-    throw new AppError('No OTP request found for this number. Please request a new OTP.', 400);
+    throw new AppError('No OTP request found for this account. Please request a new OTP first.', 400);
   }
 
   if (!user.otpExpiresAt || user.otpExpiresAt < Date.now()) {
@@ -458,7 +519,7 @@ const resetPasswordWithOTP = async (phone, otp, newPassword) => {
   );
 
   if (!isMatch) {
-    throw new AppError('Incorrect OTP. Please check the SMS and try again.', 400);
+    throw new AppError('Incorrect OTP. Please check the code and try again.', 400);
   }
 
   // Valid — set new password (pre-save hook hashes it), clear OTP
@@ -478,6 +539,7 @@ module.exports = {
   getMe,
   updatePassword,
   sendOTP,
+  sendEmailOTP,
   verifyOTP,
   googleLogin,
   authenticateFirebaseUser,

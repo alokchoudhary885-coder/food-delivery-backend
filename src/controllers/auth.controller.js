@@ -24,8 +24,9 @@ const register = catchAsync(async (req, res) => {
  * @access Public
  */
 const login = catchAsync(async (req, res) => {
-  const { email, password } = req.body;
-  const { user, token } = await authService.loginUser(email, password);
+  const identifier = req.body.identifier || req.body.email || req.body.phone;
+  const { password } = req.body;
+  const { user, token } = await authService.loginUser(identifier, password);
 
   sendSuccess(res, StatusCodes.OK, 'Logged in successfully.', { user, token });
 });
@@ -60,6 +61,12 @@ const sendOTP = catchAsync(async (req, res) => {
   sendSuccess(res, StatusCodes.OK, 'OTP sent successfully', result);
 });
 
+const sendEmailOTP = catchAsync(async (req, res) => {
+  const { email } = req.body;
+  const result = await authService.sendEmailOTP(email);
+  sendSuccess(res, StatusCodes.OK, 'Verification code sent to your email successfully.', result);
+});
+
 const verifyOTP = catchAsync(async (req, res) => {
   const { phone, otp } = req.body;
   const { user, token } = await authService.verifyOTP(phone, otp);
@@ -72,8 +79,9 @@ const googleLogin = catchAsync(async (req, res) => {
 });
 
 const resetPassword = catchAsync(async (req, res) => {
-  const { phone, otp, newPassword } = req.body;
-  const { user, token } = await authService.resetPasswordWithOTP(phone, otp, newPassword);
+  const identifier = req.body.identifier || req.body.phone || req.body.email;
+  const { otp, newPassword } = req.body;
+  const { user, token } = await authService.resetPasswordWithOTP(identifier, otp, newPassword);
   sendSuccess(res, StatusCodes.OK, 'Password has been reset successfully. Logged in!', { user, token });
 });
 
@@ -82,6 +90,17 @@ const firebaseLogin = catchAsync(async (req, res) => {
   sendSuccess(res, StatusCodes.OK, 'Logged in successfully.', { user, token });
 });
 
-module.exports = { register, login, getMe, updatePassword, sendOTP, verifyOTP, googleLogin, firebaseLogin, resetPassword };
+module.exports = {
+  register,
+  login,
+  getMe,
+  updatePassword,
+  sendOTP,
+  sendEmailOTP,
+  verifyOTP,
+  googleLogin,
+  firebaseLogin,
+  resetPassword,
+};
 
 

@@ -30,12 +30,14 @@ const registerSchema = Joi.object({
 });
 
 const loginSchema = Joi.object({
-  email: Joi.string().email().required().messages({
-    'any.required': 'Email is required',
-  }),
+  identifier: Joi.string().optional(),
+  email: Joi.string().optional(),
+  phone: Joi.string().optional(),
   password: Joi.string().required().messages({
     'any.required': 'Password is required',
   }),
+}).or('identifier', 'email', 'phone').messages({
+  'object.missing': 'Please provide your email address or mobile number to login',
 });
 
 const updatePasswordSchema = Joi.object({
