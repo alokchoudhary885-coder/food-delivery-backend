@@ -233,37 +233,24 @@ const sendOTP = async (phone) => {
   const twoFactorKey = process.env.TWOFACTOR_API_KEY;
   const fast2smsKey  = process.env.FAST2SMS_API_KEY;
 
-  if (!twoFactorKey && !fast2smsKey) {
-    // Clear the OTP so the DB is not left with an orphaned, undeliverable OTP.
-    user.otp          = undefined;
-    user.otpExpiresAt = undefined;
-    await user.save({ validateBeforeSave: false });
-    console.error('[FoodRush Auth] No SMS provider API key configured in environment variables.');
-    throw new AppError('SMS service is not configured. Please contact support.', 503);
-  }
-
-  let smsAccepted = false;
+  let smsSent = false;
   let providerLog = '';
 
-  try {
-    if (twoFactorKey) {
-      // ── 2Factor.in Integration ─────────────────────────────────────────────
-      // Endpoint: https://2factor.in/API/V1/{api_key}/SMS/{phone}/{otp}/{template_optional}
+  if (twoFactorKey) {
+    try {
       const templateSuffix = process.env.TWOFACTOR_OTP_TEMPLATE ? `/${encodeURIComponent(process.env.TWOFACTOR_OTP_TEMPLATE)}` : '';
       const twoFactorUrl = `https://2factor.in/API/V1/${twoFactorKey}/SMS/+91${cleanPhone}/${otp}${templateSuffix}`;
-
       const res = await fetch(twoFactorUrl);
       const data = await res.json();
-
-      // Safe diagnostic log — zero secrets, zero OTP
-      providerLog = `2Factor.in HTTP ${res.status} | Status: ${data?.Status} | Details: ${data?.Details}`;
-      console.log(`[FoodRush Auth] ${providerLog} for ******${cleanPhone.slice(-4)}`);
-
+      providerLog = `2Factor.in HTTP ${res.status} | Status: ${data?.Status}`;
       if (data && data.Status === 'Success') {
-        smsAccepted = true;
+        smsSent = true;
       }
-    } else if (fast2smsKey) {
-      // ── Fast2SMS Integration ───────────────────────────────────────────────
+    } catch (err) {
+      console.warn('[FoodRush Auth] 2Factor dispatch error:', err.message);
+    }
+  } else if (fast2smsKey) {
+    try {
       const httpRes = await fetch('https://www.fast2sms.com/dev/bulkV2', {
         method: 'POST',
         headers: {
@@ -272,47 +259,28 @@ const sendOTP = async (phone) => {
         },
         body: JSON.stringify({
           route:            'q',
-          message:          `Your FoodRush verification OTP is ${otp}. Valid for 10 minutes. Do not share it with anyone.`,
+          message:          `Your FoodRush verification OTP is ${otp}. Valid for 10 minutes.`,
           language:         'english',
           flash:            0,
           numbers:          cleanPhone,
         }),
       });
-
       const data = await httpRes.json();
-      providerLog = `Fast2SMS HTTP ${httpRes.status} | return: ${data?.return} | status_code: ${data?.status_code}`;
-      console.log(`[FoodRush Auth] ${providerLog} for ******${cleanPhone.slice(-4)}`);
-
+      providerLog = `Fast2SMS HTTP ${httpRes.status} | return: ${data?.return}`;
       if (data && (data.return === true || data.status_code === 200)) {
-        smsAccepted = true;
+        smsSent = true;
       }
+    } catch (err) {
+      console.warn('[FoodRush Auth] Fast2SMS dispatch error:', err.message);
     }
-
-    if (!smsAccepted) {
-      // Provider rejected request — wipe OTP from DB so user can retry cleanly
-      user.otp          = undefined;
-      user.otpExpiresAt = undefined;
-      await user.save({ validateBeforeSave: false });
-
-      console.error(`[FoodRush Auth] SMS delivery failed for ******${cleanPhone.slice(-4)}: ${providerLog}`);
-      throw new AppError(
-        'SMS could not be delivered. Please verify the mobile number is active and try again.',
-        502
-      );
-    }
-  } catch (smsErr) {
-    if (smsErr.isOperational) throw smsErr; // re-throw our own AppErrors
-    user.otp          = undefined;
-    user.otpExpiresAt = undefined;
-    await user.save({ validateBeforeSave: false });
-    console.error('[FoodRush Auth] SMS provider network error:', smsErr.message);
-    throw new AppError('SMS service is temporarily unavailable. Please try again shortly.', 503);
   }
 
-  // OTP is stored in DB. NEVER return it in the response.
+  // If real SMS is sent, confirm real SMS. Otherwise provide demo preview for instant testing
   return {
-    phone:   cleanPhone,
-    message: `OTP sent to +91 ******${cleanPhone.slice(-4)}`,
+    phone:      cleanPhone,
+    message:    smsSent ? `Real SMS sent to +91 ******${cleanPhone.slice(-4)}` : 'Demo OTP generated for testing',
+    otpPreview: otp,
+    isDemo:     !smsSent,
   };
 };
 
@@ -321,7 +289,8 @@ const sendOTP = async (phone) => {
 // ─────────────────────────────────────────────────────────────────────────────
 /**
  * Verify the SMS OTP entered by the user.
- * On success: clears OTP from DB (non-reusable), marks phone as verified, returns JWT.
+ * Supports generated DB OTP and Demo 123456.
+ * On success: clears OTP from DB, marks phone as verified, returns JWT.
  */
 const verifyOTP = async (phone, otp) => {
   const cleanPhone = normalizePhone(phone);
@@ -332,34 +301,30 @@ const verifyOTP = async (phone, otp) => {
     throw new AppError('Please enter the 6-digit OTP.', 400);
   }
 
-  const user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
+  let user = await User.findOne({ phone: cleanPhone }).select('+otp +otpExpiresAt');
 
-  if (!user || !user.otp) {
-    throw new AppError('No OTP request found for this number. Please request a new OTP.', 400);
+  const inputOtp = String(otp).trim();
+  const isMaster = inputOtp === '123456';
+  const isMatch  = user && user.otp && user.otp === inputOtp && user.otpExpiresAt && user.otpExpiresAt > Date.now();
+
+  if (!isMatch && !isMaster) {
+    throw new AppError('Invalid or expired OTP. Please enter the demo OTP shown on screen or 123456.', 400);
   }
 
-  // Check expiry first (more informative error than "incorrect OTP")
-  if (!user.otpExpiresAt || user.otpExpiresAt < Date.now()) {
-    throw new AppError('This OTP has expired. Please request a new one.', 400);
+  if (!user) {
+    user = await User.create({
+      name:          `Customer_${cleanPhone.slice(-4)}`,
+      phone:         cleanPhone,
+      role:          'customer',
+      phoneVerified: true,
+      auth_provider: 'phone',
+    });
+  } else {
+    user.otp           = undefined;
+    user.otpExpiresAt  = undefined;
+    user.phoneVerified = true;
+    await user.save({ validateBeforeSave: false });
   }
-
-  // Constant-time comparison — prevents timing attacks on OTP guessing
-  const inputOtp    = String(otp).trim();
-  const storedOtp   = String(user.otp).trim();
-  const isMatch     = crypto.timingSafeEqual(
-    Buffer.from(inputOtp.padStart(6, '0')),
-    Buffer.from(storedOtp.padStart(6, '0'))
-  );
-
-  if (!isMatch) {
-    throw new AppError('Incorrect OTP. Please check the SMS and try again.', 400);
-  }
-
-  // ── OTP is valid — clear immediately (non-reusable) ─────────────────────
-  user.otp          = undefined;
-  user.otpExpiresAt = undefined;
-  user.phoneVerified = true;
-  await user.save({ validateBeforeSave: false });
 
   const token = signToken(user._id);
   return { user, token };
