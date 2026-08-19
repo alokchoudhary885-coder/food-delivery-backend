@@ -1,13 +1,7 @@
 /**
  * @file src/seeds/seedData.js
- * @description Populates MongoDB with 8 top-rated restaurants and 40+ rich menu items across all cuisines.
+ * @description Populates MongoDB with top-rated restaurants and rich menu items across all cuisines (Egg, Biryani, Pizza, Burgers, Rolls, Chinese, North Indian, Desserts).
  */
-
-const mongoose = require('mongoose');
-require('dotenv').config();
-const User = require('../models/user.model');
-const Restaurant = require('../models/restaurant.model');
-const MenuItem = require('../models/menuItem.model');
 
 const RESTAURANTS_DATA = [
   {
@@ -46,6 +40,7 @@ const RESTAURANTS_DATA = [
     location: { type: 'Point', coordinates: [75.8124, 26.9182] },
     menu: [
       { name: 'Hyderabadi Chicken Dum Biryani', price: 320, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Fragrant aged basmati rice layered with succulent spiced chicken and brown onions.', image: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=500' },
+      { name: 'Special Egg Dum Biryani (2 Eggs)', price: 220, category: 'Main Course', isVeg: false, spiceLevel: 'medium', description: 'Aromatic basmati saffron rice layered with spiced golden fried boiled eggs, mint, and caramelized onions with raita.', image: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=500' },
       { name: 'Shahi Paneer Tikka Biryani', price: 280, category: 'Main Course', isVeg: true, spiceLevel: 'medium', description: 'Chargrilled cottage cheese tikka tossed in fragrant saffron rice with raita.', image: 'https://images.unsplash.com/photo-1642821373181-696a54913e9a?w=500' },
       { name: 'Tandoori Chicken Tikka (6 Pcs)', price: 260, category: 'Starter', isVeg: false, spiceLevel: 'hot', description: 'Juicy chicken chunks marinated in hung curd, Kashmiri mirch, and roasted in tandoor.', image: 'https://images.unsplash.com/photo-1599488615731-7e5c2823ff28?w=500' },
       { name: 'Murgh Malai Tikka', price: 280, category: 'Starter', isVeg: false, spiceLevel: 'mild', description: 'Creamy melt-in-mouth chicken kebabs infused with cardamom and cheese.', image: 'https://images.unsplash.com/photo-1610057099443-fde8c4d50f91?w=500' },
@@ -68,6 +63,7 @@ const RESTAURANTS_DATA = [
     menu: [
       { name: 'Crispy Veggie Supreme Burger', price: 149, category: 'Main Course', isVeg: true, spiceLevel: 'medium', description: 'Crispy herb potato patty layered with fresh lettuce, tomatoes, and secret mayo.', image: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500' },
       { name: 'Double Cheese Smash Chicken Burger', price: 249, category: 'Main Course', isVeg: false, spiceLevel: 'medium', description: 'Grilled chicken patty layered with double cheddar, caramelized onions, and BBQ glaze.', image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500' },
+      { name: 'Double Egg & Cheese Breakfast Burger', price: 159, category: 'Main Course', isVeg: false, spiceLevel: 'medium', description: 'Fluffy double egg omelette patty with melted cheddar cheese, lettuce, and spicy chipotle sauce in a toasted brioche bun.', image: 'https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500' },
       { name: 'Peri Peri Crispy French Fries', price: 119, category: 'Starter', isVeg: true, spiceLevel: 'hot', description: 'Golden potato fries tossed in spicy African peri peri seasoning.', image: 'https://images.unsplash.com/photo-1576107232684-1279f3908594?w=500' },
       { name: 'Thick Belgian Chocolate Shake', price: 159, category: 'Beverages', isVeg: true, spiceLevel: 'mild', description: 'Rich chocolate ice cream blended with Belgian cocoa and chocolate fudge.', image: 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=500' },
       { name: 'Crispy Onion Rings', price: 129, category: 'Starter', isVeg: true, spiceLevel: 'mild', description: 'Batter fried golden onion rings served with spicy cocktail dip.', image: 'https://images.unsplash.com/photo-1639024471287-032f66e5224e?w=500' },
@@ -75,7 +71,7 @@ const RESTAURANTS_DATA = [
   },
   {
     name: 'Rolls & Wraps Express',
-    description: 'Hot handmade flaky paratha rolls loaded with fresh tikka and mint chutney.',
+    description: 'Hot handmade flaky paratha rolls loaded with fresh tikka, egg omelette and mint chutney.',
     cuisine: ['Rolls', 'Street Food', 'Fast Food'],
     phone: '9876543213',
     deliveryTime: 20,
@@ -87,8 +83,10 @@ const RESTAURANTS_DATA = [
     address: { street: 'Vaishali Nagar, Amrapali Circle', city: 'Jaipur', state: 'Rajasthan', pincode: '302021' },
     location: { type: 'Point', coordinates: [75.7412, 26.9082] },
     menu: [
+      { name: 'Double Egg Chicken Kathi Roll', price: 199, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Double egg layered paratha filled with spicy shredded chicken, roasted onions, and tangy mint sauces.', image: 'https://images.unsplash.com/photo-1606491956689-2ea866880c84?w=500' },
+      { name: 'Classic Double Egg Roll', price: 129, category: 'Main Course', isVeg: false, spiceLevel: 'medium', description: 'Fresh pan-fried paratha with 2 fluffy beaten eggs, crunchy onions, chaat masala, and tangy green chutney.', image: 'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?w=500' },
+      { name: 'Desi Egg Masala Bhurji with 2 Parathas', price: 169, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Spicy scrambled eggs tossed with fresh tomatoes, green chilies, coriander, served with hot butter parathas.', image: 'https://images.unsplash.com/photo-1606491956689-2ea866880c84?w=500' },
       { name: 'Paneer Tikka Kathi Roll', price: 169, category: 'Main Course', isVeg: true, spiceLevel: 'medium', description: 'Charcoal roasted paneer cubes, crunchy onions, and green mint chutney in a paratha.', image: 'https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?w=500' },
-      { name: 'Double Egg Chicken Roll', price: 199, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Egg layered paratha filled with spicy shredded chicken and tangy sauces.', image: 'https://images.unsplash.com/photo-1606491956689-2ea866880c84?w=500' },
       { name: 'Cheesy Corn & Veggies Wrap', price: 149, category: 'Main Course', isVeg: true, spiceLevel: 'mild', description: 'Sweet corn, bell peppers, melted cheese sauce wrapped in whole wheat tortilla.', image: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=500' },
       { name: 'Masala Lemonade Cooler', price: 69, category: 'Beverages', isVeg: true, spiceLevel: 'mild', description: 'Chilled refreshing lemon soda with roasted cumin and black salt.', image: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500' },
     ]
@@ -107,10 +105,11 @@ const RESTAURANTS_DATA = [
     address: { street: 'Tonk Road, Bapu Nagar', city: 'Jaipur', state: 'Rajasthan', pincode: '302015' },
     location: { type: 'Point', coordinates: [75.7982, 26.8851] },
     menu: [
+      { name: 'Egg Hakka Chowmein Noodles', price: 199, category: 'Main Course', isVeg: false, spiceLevel: 'medium', description: 'Wok-tossed noodles with scrambled egg ribbons, crunchy cabbage, carrots, spring onions, and garlic soy sauce.', image: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500' },
+      { name: 'Egg Fried Rice with Schezwan Sauce', price: 189, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Aromatic jasmine rice stir-fried with eggs, vegetables, and homemade fiery Schezwan chili paste.', image: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=500' },
       { name: 'Veg Hakka Noodles', price: 179, category: 'Main Course', isVeg: true, spiceLevel: 'mild', description: 'Classic wok-tossed noodles with shredded cabbage, carrots, capsicum, and scallions.', image: 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500' },
       { name: 'Chilli Chicken Gravy', price: 279, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Tender batter-fried chicken cubes tossed in spicy soy-garlic sauce with green chilies.', image: 'https://images.unsplash.com/photo-1525755662778-989d0524087e?w=500' },
       { name: 'Crispy Veg Spring Rolls (6 Pcs)', price: 159, category: 'Starter', isVeg: true, spiceLevel: 'medium', description: 'Golden fried crispy wrappers stuffed with seasoned Asian vegetables with sweet chili dip.', image: 'https://images.unsplash.com/photo-1548943487-a2e4e43b4853?w=500' },
-      { name: 'Schezwan Fried Rice', price: 189, category: 'Main Course', isVeg: true, spiceLevel: 'hot', description: 'Spicy wok-tossed rice flavored with homemade Schezwan chili paste and spring onions.', image: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=500' },
     ]
   },
   {
@@ -131,6 +130,27 @@ const RESTAURANTS_DATA = [
       { name: 'Red Velvet Pastry', price: 129, category: 'Dessert', isVeg: true, spiceLevel: 'mild', description: 'Moist red velvet sponge layered with smooth Philadelphia cream cheese frosting.', image: 'https://images.unsplash.com/photo-1586788680434-30d324b2d46f?w=500' },
       { name: 'Choco Lava Cupcake', price: 99, category: 'Dessert', isVeg: true, spiceLevel: 'mild', description: 'Warm chocolate cake with molten chocolate core exploding on first bite.', image: 'https://images.unsplash.com/photo-1603532648955-039310d9ed75?w=500' },
       { name: 'Cold Coffee with Ice Cream', price: 129, category: 'Beverages', isVeg: true, spiceLevel: 'mild', description: 'Creamy blended espresso coffee topped with vanilla ice cream and chocolate syrup.', image: 'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?w=500' },
+    ]
+  },
+  {
+    name: 'Punjab Dhaba & North Indian Kitchen',
+    description: 'Authentic Punjabi curries, dal makhani, egg curry, tandoori rotis, and butter chicken.',
+    cuisine: ['North Indian', 'Curry', 'Dhaba'],
+    phone: '9876543216',
+    deliveryTime: 30,
+    deliveryFee: 35,
+    minimumOrder: 150,
+    rating: 4.8,
+    totalRatings: 215,
+    image: 'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=800&auto=format&fit=crop',
+    address: { street: 'Ajmer Road, Sodala', city: 'Jaipur', state: 'Rajasthan', pincode: '302006' },
+    location: { type: 'Point', coordinates: [75.7721, 26.9011] },
+    menu: [
+      { name: 'Dhaba Style Egg Curry (2 Boiled Eggs)', price: 189, category: 'Main Course', isVeg: false, spiceLevel: 'hot', description: 'Golden fried boiled eggs simmered in a thick, spicy onion-tomato gravy with fragrant Punjabi garam masala.', image: 'https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=500' },
+      { name: 'Dal Makhani Special', price: 219, category: 'Main Course', isVeg: true, spiceLevel: 'mild', description: 'Black lentils slow cooked overnight with white butter, cream, and aromatic spices.', image: 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500' },
+      { name: 'Paneer Butter Masala', price: 259, category: 'Main Course', isVeg: true, spiceLevel: 'medium', description: 'Fresh cottage cheese cubes in rich cashew-tomato buttery gravy.', image: 'https://images.unsplash.com/photo-1631452180519-c014fe946bc7?w=500' },
+      { name: 'Butter Chicken Homestyle', price: 329, category: 'Main Course', isVeg: false, spiceLevel: 'medium', description: 'Tender tandoori chicken pieces cooked in velvety makhani gravy with fenugreek leaves.', image: 'https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?w=500' },
+      { name: 'Butter Garlic Naan (2 Pcs)', price: 79, category: 'Main Course', isVeg: true, spiceLevel: 'mild', description: 'Crispy tandoori leavened flatbread brushed with garlic butter and fresh coriander.', image: 'https://images.unsplash.com/photo-1601050690597-df0568f70950?w=500' },
     ]
   }
 ];

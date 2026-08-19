@@ -1,19 +1,64 @@
 /**
  * @file src/services/ai.service.js
  * @description FoodRush Level 3 Location-Aware Conversational Food AI & Autonomous Ordering Engine.
- * Supports:
- * 1. Social & Conversational Chitchat (Thanks, Greetings, Help, Capabilities)
- * 2. Location-Aware Discovery using Backend Restaurant Service
- * 3. Mood & Scenario-Based Food Recommendations (Party, Sad/Comfort, Romantic, Rainy/Monsoon, Late Night)
- * 4. Live Restaurant Directory & Ratings Inquiries
- * 5. Order Tracking, Delivery & Payment FAQs
- * 6. Multi-Turn Conversation Memory & Autonomous Direct Cart Actions
+ * Features:
+ * 1. Deep Food Synonym & Multilingual Matching (Egg, Biryani, Pizza, Burger, Pasta, Rolls, Chinese, Curries, Shakes, Desserts)
+ * 2. Strict Keyword Relevance vs Generic Distance Scoring (Never suggests random burgers for an egg query)
+ * 3. Fallback Global Database Search when nearby radius lacks specific item
+ * 4. Social & Conversational Chitchat (Thanks, Greetings, Help, Capabilities)
+ * 5. Multi-Turn Conversation Memory & Autonomous Direct Cart Actions
  */
 
 const MenuItem = require('../models/menuItem.model');
 const Restaurant = require('../models/restaurant.model');
 const restaurantService = require('./restaurant.service');
 const AppError = require('../utils/AppError');
+
+/**
+ * Rich Food Synonyms Dictionary for intelligent multi-lingual matching (Hindi/English/Hinglish).
+ */
+const FOOD_SYNONYMS = {
+  egg: ['egg', 'eggs', 'anda', 'ande', 'omlet', 'omelet', 'omelette', 'bhurji', 'egg roll', 'egg biryani', 'egg curry', 'egg burger', 'egg chowmein'],
+  biryani: ['biryani', 'biriyani', 'dum biryani', 'pulao', 'hyderabadi biryani', 'lucknowi biryani'],
+  pizza: ['pizza', 'pizzas', 'margherita', 'garlic bread', 'cheese burst', 'wood fired'],
+  burger: ['burger', 'burgers', 'cheeseburger', 'patty', 'fries', 'smash burger'],
+  chicken: ['chicken', 'chickens', 'murgh', 'murg', 'tikka', 'tandoori', 'kebab', 'chilli chicken', 'butter chicken'],
+  paneer: ['paneer', 'cottage cheese', 'shahi paneer', 'kadai paneer', 'paneer butter masala', 'paneer tikka'],
+  pasta: ['pasta', 'penne', 'alfredo', 'arrabbiata', 'macaroni', 'spaghetti', 'white sauce'],
+  rolls: ['roll', 'rolls', 'kathi roll', 'wrap', 'wraps', 'frankie', 'shawarma'],
+  noodles: ['noodle', 'noodles', 'chowmein', 'hakka', 'manchurian', 'fried rice', 'chinese', 'schezwan', 'asian'],
+  dessert: ['dessert', 'desserts', 'sweet', 'sweets', 'mithai', 'brownie', 'cake', 'pastry', 'ice cream', 'icecream', 'shake', 'gulab jamun', 'lava', 'cupcake', 'waffle'],
+  beverages: ['shake', 'shakes', 'coffee', 'cold drink', 'soda', 'lemonade', 'juice', 'cooler', 'chai', 'tea', 'lassi'],
+  dosa: ['dosa', 'dosas', 'idli', 'vada', 'sambar', 'south indian', 'uttapam'],
+  breads: ['naan', 'roti', 'paratha', 'parathas', 'kulcha', 'bread', 'breads', 'garlic naan'],
+  curry: ['curry', 'curries', 'dal', 'makhani', 'tadka', 'chole', 'gravy', 'dhaba'],
+};
+
+/**
+ * Extract matched food categories and synonym keywords from raw query text.
+ */
+const extractExpandedFoodTokens = (rawText = '') => {
+  const text = rawText.toLowerCase().trim();
+  const rawWords = text.split(/\s+/).filter((w) => w.length >= 2);
+  const expandedTokens = new Set(rawWords);
+  let matchedCategory = null;
+
+  for (const [category, synonyms] of Object.entries(FOOD_SYNONYMS)) {
+    for (const syn of synonyms) {
+      if (text.includes(syn) || rawWords.includes(syn)) {
+        matchedCategory = category;
+        synonyms.forEach((s) => expandedTokens.add(s));
+        break;
+      }
+    }
+  }
+
+  return {
+    tokens: Array.from(expandedTokens),
+    hasSpecificFoodIntent: matchedCategory !== null || rawWords.some((w) => w.length >= 3),
+    matchedCategory,
+  };
+};
 
 /**
  * Analyze intent, sentiment, context, and entities from user query.
@@ -133,11 +178,14 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
 
   // Dietary
   let isVeg = null;
-  if (/non-veg|nonveg|chicken|mutton|fish|meat|egg/i.test(text)) isVeg = false;
-  else if (/veg|vegetarian|shakahari|paneer/i.test(text)) isVeg = true;
+  if (/non-veg|nonveg|chicken|mutton|fish|meat|egg|anda/i.test(text)) isVeg = false;
+  else if (/pure veg|sirf veg|only veg|shakahari/i.test(text)) isVeg = true;
 
   // Spicy
   const spicy = /spicy|tikha|teekha|mirch|chatpata|hot/i.test(text);
+
+  // Expand food synonyms
+  const { tokens, hasSpecificFoodIntent, matchedCategory } = extractExpandedFoodTokens(text);
 
   return {
     intent: isDirectAdd ? 'DIRECT_ADD_SEARCH' : 'RECOMMEND',
@@ -148,6 +196,9 @@ const analyzeIntentAndEntities = (query = '', history = []) => {
     isVeg,
     spicy,
     rawText: text,
+    tokens,
+    hasSpecificFoodIntent,
+    matchedCategory,
   };
 };
 
@@ -282,7 +333,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = [], 
     };
   }
 
-  // ── 9. Location-Aware Nearby Restaurants Resolution ────────────────────
+  // ── 9. Fetch Available Menu Items from Database ────────────────────────
   let allowedRestaurantIds = null;
   let nearbyRestaurantMap = {};
 
@@ -301,82 +352,113 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = [], 
     }
   }
 
-  // Build items query
-  const filter = { isAvailable: true };
-  if (analysis.isVeg !== null) filter.isVeg = analysis.isVeg;
-  if (allowedRestaurantIds && allowedRestaurantIds.length > 0) {
-    filter.restaurant = { $in: allowedRestaurantIds };
-  }
-
-  let allItems = await MenuItem.find(filter)
-    .populate('restaurant', 'name city rating image isActive location')
+  // Step A: Load all active menu items from MongoDB
+  let allItems = await MenuItem.find({ isAvailable: true })
+    .populate('restaurant', 'name city rating image isActive location cuisine')
     .lean();
 
   allItems = allItems.filter((i) => i.restaurant && i.restaurant.isActive !== false);
 
-  // Fallback if no items found in strict nearby radius
-  if (allItems.length === 0) {
-    const fallbackFilter = { isAvailable: true };
-    if (analysis.isVeg !== null) fallbackFilter.isVeg = analysis.isVeg;
-    allItems = await MenuItem.find(fallbackFilter)
-      .populate('restaurant', 'name city rating image isActive location')
-      .lean();
-    allItems = allItems.filter((i) => i.restaurant && i.restaurant.isActive !== false);
-  }
+  // Step B: Calculate Relevance Scores
+  const queryTokens = analysis.tokens || [];
+  let hasAnyKeywordMatch = false;
 
-  // Scoring engine
-  const queryTokens = analysis.rawText.split(/\s+/).filter((t) => t.length > 2);
   const scored = allItems.map((item) => {
-    let score = 0;
+    let keywordScore = 0;
     const nameLower = (item.name || '').toLowerCase();
     const descLower = (item.description || '').toLowerCase();
     const catLower = (item.category || '').toLowerCase();
+    const cuisineList = (item.restaurant?.cuisine || []).map((c) => c.toLowerCase());
 
+    // 1. Direct Keyword and Synonym Matching
     queryTokens.forEach((t) => {
-      if (nameLower.includes(t)) score += 12;
-      if (descLower.includes(t)) score += 6;
-      if (catLower.includes(t)) score += 4;
+      if (!t || t.length < 2) return;
+      if (nameLower.includes(t)) {
+        keywordScore += 150; // Heavy boost for dish name match
+        hasAnyKeywordMatch = true;
+      }
+      if (descLower.includes(t)) {
+        keywordScore += 60;
+        hasAnyKeywordMatch = true;
+      }
+      if (catLower.includes(t)) {
+        keywordScore += 40;
+        hasAnyKeywordMatch = true;
+      }
+      if (cuisineList.some((c) => c.includes(t))) {
+        keywordScore += 30;
+      }
     });
 
-    if (analysis.spicy && (item.spiceLevel === 'hot' || item.spiceLevel === 'extra-hot' || nameLower.includes('spicy') || descLower.includes('spicy') || nameLower.includes('tikka'))) {
-      score += 10;
+    // 2. Category Level Boost (e.g. egg category)
+    if (analysis.matchedCategory) {
+      if (FOOD_SYNONYMS[analysis.matchedCategory]?.some((s) => nameLower.includes(s))) {
+        keywordScore += 80;
+        hasAnyKeywordMatch = true;
+      }
     }
 
-    // Mood boosts
+    // 3. Dietary Preferences
+    if (analysis.isVeg !== null) {
+      if (item.isVeg === analysis.isVeg) keywordScore += 25;
+      else keywordScore -= 40; // Penalize mismatch (e.g. asking veg and showing meat)
+    }
+
+    // 4. Spice Level Matching
+    if (analysis.spicy && (item.spiceLevel === 'hot' || item.spiceLevel === 'extra-hot' || nameLower.includes('spicy') || descLower.includes('spicy') || nameLower.includes('tikka') || nameLower.includes('peri peri'))) {
+      keywordScore += 20;
+    }
+
+    // 5. Mood Boosts
     if (analysis.mood === 'COMFORT_FOOD' && (/dessert|pizza|pasta|chocolate|cake|brownie|shake/i.test(nameLower) || catLower === 'dessert')) {
-      score += 15;
+      keywordScore += 30;
     }
     if (analysis.mood === 'PARTY' && (/pizza|burger|roll|combo|starter/i.test(nameLower) || catLower === 'combo' || catLower === 'starter')) {
-      score += 15;
+      keywordScore += 30;
     }
-    if (analysis.mood === 'RAINY' && (/starter|roll|tikka|chai|pakora|crispy|hot/i.test(nameLower) || catLower === 'starter')) {
-      score += 15;
+    if (analysis.mood === 'RAINY' && (/starter|roll|tikka|chai|pakora|crispy|hot|bhurji/i.test(nameLower) || catLower === 'starter')) {
+      keywordScore += 30;
     }
 
-    score += (item.restaurant?.rating || 4.0) * 2;
+    // 6. Restaurant Rating Boost (up to 10 points)
+    const ratingScore = (item.restaurant?.rating || 4.0) * 2;
 
-    // Attach nearby formatted distance if available
+    // 7. Distance Boost (if restaurant is nearby in GPS)
     const restIdStr = item.restaurant?._id?.toString();
     const distanceInfo = nearbyRestaurantMap[restIdStr];
+    let distanceScore = 0;
     if (distanceInfo?.formattedDistance) {
-      score += 8; // Prioritize closer restaurants
+      distanceScore = 15;
     }
+
+    const totalScore = keywordScore + ratingScore + distanceScore;
 
     return {
       ...item,
-      score,
+      keywordScore,
+      score: totalScore,
       formattedDistance: distanceInfo?.formattedDistance || null,
     };
   });
 
-  scored.sort((a, b) => b.score - a.score);
+  // Step C: Filter Results
+  let candidateItems = scored;
+
+  // CRUCIAL: If user searched for specific food (e.g. "egg" or "pizza") and matches exist,
+  // ONLY return the items that actually matched the food keyword! Never show random burgers!
+  if (analysis.hasSpecificFoodIntent && hasAnyKeywordMatch) {
+    candidateItems = scored.filter((i) => i.keywordScore >= 40);
+  }
+
+  // Sort by highest score first
+  candidateItems.sort((a, b) => b.score - a.score);
 
   // Group selection within budget
   let selected = [];
   let currentTotal = 0;
   const targetCount = Math.max((analysis.people || 1) * 2, 3);
 
-  for (const item of scored) {
+  for (const item of candidateItems) {
     if (selected.length >= targetCount) break;
     if (selected.some((s) => s.name.toLowerCase() === item.name.toLowerCase())) continue;
 
@@ -391,12 +473,18 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = [], 
     }
   }
 
-  if (selected.length === 0 && scored.length > 0) {
-    selected = scored.slice(0, 3);
+  if (selected.length === 0 && candidateItems.length > 0) {
+    selected = candidateItems.slice(0, 3);
     currentTotal = selected.reduce((s, i) => s + i.price, 0);
   }
 
-  // Format tailored conversational reply
+  // If even candidateItems was empty (e.g. very obscure search term), fallback to top rated
+  if (selected.length === 0 && scored.length > 0) {
+    selected = scored.sort((a, b) => b.score - a.score).slice(0, 3);
+    currentTotal = selected.reduce((s, i) => s + i.price, 0);
+  }
+
+  // ── Step D: Format Accurate Conversational Reply ───────────────────────
   let replyText = '';
   const portionLabel = (analysis.people || 1) > 1 ? `${analysis.people} people` : 'you';
   const nearbyTag = analysis.radiusInMeters ? ` (${(analysis.radiusInMeters / 1000)} km ke andar)` : (userLocation ? ' nearby' : '');
@@ -415,7 +503,11 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = [], 
     };
   }
 
-  if (analysis.mood === 'COMFORT_FOOD') {
+  if (analysis.hasSpecificFoodIntent && hasAnyKeywordMatch) {
+    replyText = `Maine aapke liye "${userQuery}" se related best real dishes${nearbyTag} dhundh li hain! 🍽️✨`;
+  } else if (analysis.hasSpecificFoodIntent && !hasAnyKeywordMatch) {
+    replyText = `Aapki search "${userQuery}" se exact match hone wali dish abhi menu mein nahi mili, lekin FoodRush ke ye top-rated dishes${nearbyTag} aap zaroor try kar sakte hain: 👇`;
+  } else if (analysis.mood === 'COMFORT_FOOD') {
     replyText = `Mood theek karne ke liye ye delicious comfort food dishes${nearbyTag} aapka mood instant fresh kar dengi! 🍫🍕✨`;
   } else if (analysis.mood === 'PARTY') {
     replyText = `Party aur doston ke liye perfect party feast recommendations${nearbyTag}! 🎉🍕🥤`;
@@ -426,7 +518,7 @@ const getFoodRecommendations = async (userQuery = '', conversationHistory = [], 
   } else if (analysis.spicy) {
     replyText = `Aapke liye spicy aur flavorful top-rated dishes${nearbyTag} ready hain! 🔥🌶️`;
   } else {
-    replyText = `Here are chef-special recommendations${nearbyTag} curated for ${portionLabel}! 🍕✨`;
+    replyText = `Here are chef-special recommendations${nearbyTag} curated for ${portionLabel}! 🍽️✨`;
   }
 
   return {
@@ -461,9 +553,10 @@ const generateMenuItemDetails = async (dishName = '', cuisine = 'Indian') => {
   if (!dishName) throw new AppError('Dish name is required.', 400);
 
   const name = dishName.trim();
-  const isVeg = !(/chicken|mutton|fish|prawn|egg|meat|pork|beef/i.test(name));
+  const isVeg = !(/chicken|mutton|fish|prawn|egg|anda|meat|pork|beef/i.test(name));
 
   const descriptions = {
+    egg: 'Farm-fresh eggs cooked with rich spices, aromatic herbs, and traditional tempering.',
     pizza: 'Artisan hand-stretched sourdough crust layered with rich San Marzano tomato sauce, melted mozzarella, and fresh herbs baked to perfection.',
     paneer: 'Tender cubes of fresh cottage cheese tossed in a rich, aromatic blend of slow-cooked spices, butter, and culinary herbs.',
     burger: 'Juicy, seasoned patty grilled to savory perfection, layered with crisp lettuce, ripe tomatoes, melted cheese, and signature secret sauce.',
